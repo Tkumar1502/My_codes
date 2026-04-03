@@ -5,6 +5,7 @@ Created on Thu Mar 19 15:32:58 2026
 @author: tlnu
 """
 
+#adding this on macbook 4:49pm-4/3/26
 
 import biosteam as bst
 from plastics import strap
