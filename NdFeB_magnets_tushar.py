@@ -11,7 +11,7 @@ from chaospy.distributions import Uniform
 import pandas as pd
 from warnings import filterwarnings
 import numpy as np
-
+from matplotlib.colors import TwoSlopeNorm, Normalize
 
 
 
@@ -66,11 +66,17 @@ units.append(HS)            #have to make sure you append any new unit to see th
 
 #changing the names for the streams?
 HS.outs[0].ID = 'Impellers'         #changing the sorted feed of interest to impellers
-process.M2.outs[0].ID = 'NdFeB Magnets'
+#process.M2.outs[0].ID = 'NdFeB Magnets'
 process.U9.outs[0].ID = 'HDPE resins'
+
+#removing units
+process.U6.ins[0] = process.P3.outs[0]
+units.remove(process.U4)
+units.remove(process.U5)
 
 
 process.system.update_configuration(units)  #we need update the system after adding handsorting
+
 
 
 process.system.diagram(format = 'svg') #just to check if the changes are working or not
