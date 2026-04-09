@@ -18,7 +18,7 @@ from chaospy.distributions import Uniform
 import pandas as pd
 from warnings import filterwarnings
 import numpy as np
-import matplotlib as plt
+import matplotlib.pyplot as plt
 import os
 from datetime import datetime
 from matplotlib.ticker import PercentFormatter, FuncFormatter
@@ -28,7 +28,7 @@ from matplotlib.colors import TwoSlopeNorm, Normalize
 filterwarnings('ignore')
 
 bst.main_flowsheet.clear() #resets names for consistency
-
+bst.preferences.dark_mode()
 
 #define scenario
 
@@ -55,16 +55,38 @@ process.plastic.ID = 'Bioreactor Bags'
 #now we have to remove shredding and add handsorting
 
 #Create handsorting unit
-class Handsorting (bst.Unit):
-    pass
+
+class HandSorting(bst.Unit):
+    N_shifts = 3
+    N_workers = 3
+    
+    def _init(self, N_workers,N_shifts):
+        self.N_workers = N_workers
+        self.N_shifts = N_shifts
+        self._cost()
+        
+    def _cost(self):
+        worker_salary = 5e4
+        self.total_salary = worker_salary*self.N_shifts*self.N_workers*1.6
+    
+    def results(self):
+        
+        results = {
+            "Parameters": ['Workers', 'Shifts (8hrs/shift)','Scaling(Vacation etc.)','Total Labor Cost'],
+            "Value":[self.N_workers, self.N_shifts, 1.6, self.total_salary]
+            }
+        return pd.DataFrame(results)
+    
+  
+    
 
 
 #connecting handsorting and removing shredding
 units = process.system.units
 
-HS = Handsorting() #creating handsorting as unit
+HS = HandSorting(N_workers =3,N_shifts=3) #creating handsorting as unit
 
-#adjusting the streams going in and outs
+# adjusting the streams going in and outs
 HS.ins[0] = process.plastic        #plastic here is the feed that you entered
 process.T1.ins[0] = HS.outs[0]
 process.U3.ins[0] = process.T1.outs[0]
@@ -89,9 +111,9 @@ units.append(S_mag)
 
 T_mag = bst.StorageTank(ins= S_mag.outs[1], outs='NdFeB Magnets')
 # T_mag.outs[0] = process.leftover_plastic
-
-units.append(T_mag)
 process.NdFeB_Magnets = T_mag.outs[0]
+units.append(T_mag)
+
 
 #removing unnecessary units for magnets
 process.U6.ins[0] = process.P3.outs[0]
@@ -114,7 +136,11 @@ process.system.diagram(format = 'svg') #just to check if the changes are working
 
 
 #adjust tea parameters
-process.tea.labor_cost = 1350000    #2 operators X $60k, 1 loader x $50k, 1 engineer x $100k
+process.tea.labor_cost = 580000 + HS.total_salary #2 operators X 4.8 X $50k, 1 engineer x $100k
+process.tea.operating_days = 328.5
+hours_in_shifts = 24
+process.tea.operating_hours = process.tea.operating_days*(hours_in_shifts)
+
 
 
 #define products and set sale prices
@@ -185,11 +211,11 @@ pcs = np.linspace(lb,ub,30)
 #calculate unit operating cost for given capacity
 def UOC(pc):
     process.set_processing_capacity(pc)
-    process.system.similate()
+    process.system.simulate()
     aoc = process.tea.AOC
     
     #not exactly sure what is this? and why it's here?
-    landfill = process.leftover_plastic.price*process.leftover_plastic.F_mass*process.tea_operating_hours
+    landfill = process.NdFeB_Magnets.price*process.leftover_plastic.F_mass*process.tea.operating_hours
     
     return (aoc-landfill)/(process.PE_resin.F_mass*process.tea.operating_hours)
 
@@ -216,7 +242,7 @@ def dROI(pc):
     droi = process.tea.NPV/process.tea.TCI
     return droi
 
-'''
+
 #get data
 def msp_plot():
     MSPs = [MSP(i) for i in pcs]
@@ -484,4 +510,329 @@ def irr_contour(lb, ub, low_price, high_price):
     plt.show()
     
     
-'''
+
+
+
+#%%  LCA
+
+######## SET CHARACTERIZATION FACTORS #########################
+GWP = 'GWP'
+FFC = 'FFC'
+WU = 'WU'
+HTC = 'HTC'
+HTNC = 'HTNC'
+ETOX = 'ETOX'
+ACD = 'ACD'
+OZD = 'OZD'
+POCP = 'POCP'
+
+
+#natural gas CF
+process.natural_gas.set_CF(GWP, 0.61146) # kg CO2 eq / kg NG
+process.natural_gas.set_CF(FFC,50.937, )# 51MJ/kg from EF 2.0
+process.natural_gas.set_CF(WU,0.01633, )
+process.natural_gas.set_CF(HTC,2.708e-10, )
+process.natural_gas.set_CF(HTNC,3.5399e-9 )
+process.natural_gas.set_CF(ETOX, 0.02579)
+process.natural_gas.set_CF(ACD,0.00130)
+process.natural_gas.set_CF(OZD, 2.8956e-11)
+process.natural_gas.set_CF(POCP,.00124)                        
+
+#add CFs for xylene
+# EF 2.0; Xylene production, production mix, at plant, technology mix, 100% active substance
+# solvent vapor trap incineration: EF 2.0 Waste incineration of inert material, production mix, at consumer, waste-to-energy plant with dry flue gas treatment, including transport and pre-treatment, inert material waste
+process.solvent.set_CF(FFC,52.33 + 2.260, )#EF 2.0; Xylene production, production mix, at plant, technology mix, 100% active substance
+process.solvent.set_CF(GWP,0.9383 + 0.1563, )
+process.solvent.set_CF(WU,0.16893 + 0.12196, )
+process.solvent.set_CF(HTC,2.6045e-8 + 3.56126e-10, )
+process.solvent.set_CF(HTNC,8.74695e-8 + 8.0464e-9, )
+process.solvent.set_CF(ETOX,0.8608 + 0.00900, )
+process.solvent.set_CF(ACD,0.00463 + 0.00048, )
+process.solvent.set_CF(OZD,2.78856e-9 + 2.8967e-11, )
+process.solvent.set_CF(POCP,0.00335 + 0.00044, )
+
+#CFs for water
+process.makeup_water.set_CF(FFC,5.09/1000, )#MJ/kg
+process.makeup_water.set_CF(GWP,0.33/1000, ) #kg co2 eq / kg water
+process.makeup_water.set_CF(WU, 4.3e-2/1000) #m3/kg cooling water
+process.makeup_water.set_CF(HTC, 3.6e-14)  #CTUh / kg cooling water
+process.makeup_water.set_CF(HTNC, 1.4e-13) #CTUh / kg cooling water
+process.makeup_water.set_CF(ETOX, 4.3e-7) #CTUe / kg cooling water
+process.makeup_water.set_CF(ACD, 2.7918e-7) #
+process.makeup_water.set_CF(OZD, 1.314e-12) #!!!!!!!
+process.makeup_water.set_CF(POCP, 1.505e-7)#!!!!!!!
+
+#same values as makeup water...
+process.cooling_tower_makeup_water.set_CF(FFC,5.09/1000, )
+process.cooling_tower_makeup_water.set_CF(GWP,0.33/1000, )
+process.cooling_tower_makeup_water.set_CF(WU, 4.3e-2/1000) #m3/kg cooling water
+process.cooling_tower_makeup_water.set_CF(HTC, 3.6e-14)  #CTUh / kg cooling water
+process.cooling_tower_makeup_water.set_CF(HTNC, 1.4e-13) #CTUh / kg cooling water
+process.cooling_tower_makeup_water.set_CF(ETOX, 4.3e-7) #CTUe / kg cooling water
+process.cooling_tower_makeup_water.set_CF(ACD, 2.7918e-7) #!!!!!!!
+process.cooling_tower_makeup_water.set_CF(OZD, 1.314e-12) #!!!!!!!
+process.cooling_tower_makeup_water.set_CF(POCP, 1.505e-7)#!!!!!!!
+
+#CFs for adsorbent
+#EF 2.0 activated silica production, production mix, at plant, technology mix, 100% active substance (activated carbon not available)
+#adsorbent landfilling: EF 2.0 Landfill of polluted inorganic waste, production mix (region specific sites), at landfill site, landfill including leachate treatment and with transport without collection and pre-treatment
+process.adsorption_column.ins[2].ID = 'Adsorbent'
+process.adsorption_column.ins[2].set_CF(GWP, 1.78+0.02643,  ) 
+process.adsorption_column.ins[2].set_CF(FFC, 23.99+0.3452,  ) 
+process.adsorption_column.ins[2].set_CF(WU,1.0335 + .00207  )
+process.adsorption_column.ins[2].set_CF(HTC, 5.247e-8+ 1.354e-8 )
+process.adsorption_column.ins[2].set_CF(HTNC,3.247e-7 + 1.569e-8 )
+process.adsorption_column.ins[2].set_CF(ETOX,1.471 + 0.2591 )
+process.adsorption_column.ins[2].set_CF(ACD,0.01891 + .00015 )
+process.adsorption_column.ins[2].set_CF(OZD,2.833e-9 + 4.311e-14 )
+process.adsorption_column.ins[2].set_CF(POCP,0.00619 + .00207 )
+
+
+
+#code from Charles
+
+impact_categories = [GWP, FFC, WU, HTC, HTNC, ETOX, ACD, OZD, POCP]
+LDPE_impact_factors = {'GWP': 2.091, 'FFC':75.77, 'WU':1.562, 'HTC':2.66E-8, 
+                       'HTNC':2.40E-7, 'ETOX':.69707, 'ACD':.00554, 
+                       'OZD':2.11E-10, 'POCP':.00751}
+
+
+def lca_factor_3bar(
+    factors,
+    virgin_values,
+    excel_path,
+    label_offsets_percent=(-0.1, 0.15, 0.15)  # Virgin, WtE, Landfill
+):
+    plt.rcdefaults()  # fix matplotlib bug
+
+    factor_units = {
+        "GWP": "kg CO₂ eq",
+        "FFC": "MJ",
+        "WU": "m³",
+        "HTC": "CTUh",
+        "HTNC": "CTUh",
+        "ETOX": "CTHe",
+        "ACD": "mol H+ eq",
+        "OZD": "kg CFC-11 eq",
+        "POCP": "kg NMVOC eq",
+    }
+
+    production_methods = (
+        "Virgin PE",
+        "STRAP PE waste-to-energy",
+        "STRAP PE waste landfilling",
+    )
+
+    # Fixed x-label rotation angle
+    rotation_angle = 30
+
+    plt.close("all")
+    for factor in factors:
+        # STRAP PE waste-to-energy table
+        table = bst.report.lca_displacement_allocation_table(
+            process.system, factor, products,
+        )
+
+        # Read landfill data from Excel
+        landfill_df = pd.read_excel(
+            excel_path, sheet_name=factor, header=None,
+        )
+
+        # Initialize contribution dictionary
+        weight_counts = {
+            "Virgin resin": np.array([virgin_values.get(factor, 0), 0, 0])
+        }
+        total_val = 0
+
+        # --- STRAP PE waste-to-energy contributions ---
+        for factor_name, row in table.iterrows():
+            if isinstance(factor_name, tuple):
+                if factor_name[0].startswith("Total"):
+                    continue
+                factor_name = factor_name[1]
+            else:
+                factor_name = str(factor_name)
+            value = row.iloc[1]
+            if not isinstance(value, (int, float)) or np.isnan(value) or value == 0:
+                continue
+            weight_counts.setdefault(factor_name, np.zeros(3))[1] = value
+            total_val += value
+
+        # --- STRAP PE waste landfilling contributions ---
+        for _, row in landfill_df.iterrows():
+            label = str(row.iloc[0])
+            value = row.iloc[1]
+            if not isinstance(value, (int, float)) or np.isnan(value) or value == 0:
+                continue
+            weight_counts.setdefault(label, np.zeros(3))[2] = value
+            total_val += value
+
+        # Filter out negligible contributions (<0.5% of total)
+        weight_counts = {
+            k: v for k, v in weight_counts.items()
+            if total_val == 0 or v.sum() / total_val > 0.005
+        }
+        weight_counts = dict(sorted(weight_counts.items(), key=lambda x: x[1].sum(), reverse=True))
+
+        # --- Plot ---
+        width = 0.5
+        fig, ax = plt.subplots(figsize=(6, 4.5), constrained_layout=True)
+        bottom = np.zeros(3)
+        for label, weight_count in weight_counts.items():
+            ax.bar(
+                production_methods, weight_count, width, label=label, bottom=bottom,
+            )
+            bottom += weight_count
+
+        # Floating total labels with max height rule
+        first_bar_label_y = None
+        for i, total in enumerate(bottom):
+            offset_pct = label_offsets_percent[i] if i < len(label_offsets_percent) else 0.05
+            offset = total * offset_pct if total > 0 else 0.05
+            if abs(total) < 0.01 and total != 0:
+                label_text = f"{total:.2e}"
+            else:
+                label_text = f"{total:.3g}"
+
+            # Determine y-position with max height rule
+            y_pos = total + offset
+            if i == 0:
+                first_bar_label_y = y_pos
+            else:
+                y_pos = min(y_pos, first_bar_label_y)
+
+            ax.text(
+                i,
+                y_pos,
+                label_text,
+                ha="center",
+                va="bottom",
+                bbox=dict(facecolor="white", edgecolor="none", pad=1.0),
+            )
+
+        unit = factor_units.get(factor, "arbitrary units")
+        ax.set_ylabel(f"{factor} ({unit} per kg PE)")
+
+        # Set x-axis label rotation
+        ax.set_xticklabels(production_methods, rotation=rotation_angle, ha="right")
+
+        ax.legend(loc="best")
+        plt.tight_layout()
+        fig.canvas.draw()
+        fig.set_size_inches(6, 4, forward=True)
+        
+        #Save each plot by factor name
+        plt.savefig("./results/pallet_wrap/" + f"{factor}_PE_3barpng", dpi=300, bbox_inches="tight")
+        plt.show()
+        
+        plt.show()
+        plt.close(fig)
+
+#####original########################
+def lca_factor_barcharts(
+    factors,
+    virgin_values,
+    label_offsets_percent=(-0.1, 0.15)  # (Virgin PE %, STRAP PE %)
+):
+    """
+    Create stacked bar charts for multiple LCA impact factors.
+    
+    Parameters
+    ----------
+    factors : list of str
+        Impact categories to plot (e.g., ["GWP", "AP", "EP"]).
+    virgin_values : dict
+        Dictionary of virgin resin values (e.g., {"GWP": 2.091, "AP": 0.34}).
+    label_offsets_percent : tuple of float
+        Relative offset for floating labels for each bar (as fraction of bar height),
+        e.g., (0.05, 0.1) = 5% for Virgin PE, 10% for STRAP PE.
+    """
+
+    # Units for impact factors
+    factor_units = {
+        "GWP": "kg CO₂ eq",
+        "FFC": "MJ",
+        "WU": "m³",
+        "HTC":"CTUh",
+        "HTNC":"CTUh",
+        "ETOX":"CTHe",
+        "ACD":"mol H+ eq",
+        "OZD": "kg CFC-11 eq",
+        "POCP": "kg NMVOC eq",
+        # add more factors as needed
+    }
+    
+    for factor in factors:
+        # Build LCA table for this factor
+        table = bst.report.lca_displacement_allocation_table(
+            process.system,
+            factor,
+            products,
+        )
+        
+        print(table)
+        
+        production_methods = ("Virgin PE", "STRAP PE")
+        weight_counts = {"Virgin resin": np.array([virgin_values.get(factor, 0), 0])}
+        
+        total_val = 0
+        for factor_name, row in table.iterrows():
+            if isinstance(factor_name, tuple):
+                if factor_name[0].startswith("Total"):
+                    continue
+                factor_name = factor_name[1]
+            else:
+                factor_name = str(factor_name)
+
+            value = row.iloc[1]
+            if not isinstance(value, (int, float)) or np.isnan(value) or float(value) == 0.0:
+                continue
+
+            weight_counts[factor_name] = np.array([0, value])
+            total_val += value
+        
+        # Filter out negligible contributions (<0.5% of total)
+        weight_counts = {
+            k: v for k, v in weight_counts.items()
+            if total_val == 0 or v.sum() / total_val > 0.005
+        }
+        weight_counts = dict(sorted(weight_counts.items(), key=lambda x: x[1].sum(), reverse=True))
+        
+        # Plot
+        width = 0.5
+        fig, ax = plt.subplots()
+        bottom = np.zeros(2)
+        
+        for label, weight_count in weight_counts.items():
+            ax.bar(production_methods, weight_count, width, label=label, bottom=bottom)
+            bottom += weight_count
+        
+        # Add floating labels with individual relative offsets and 3 sig figs
+        for i, total in enumerate(bottom):
+            bar_height = total
+            offset_pct = label_offsets_percent[i] if i < len(label_offsets_percent) else 0.05
+            offset = bar_height * offset_pct if bar_height > 0 else 0.05
+            
+            # 3 sig figs, use scientific notation if < 0.01
+            if abs(total) < 0.01 and total != 0:
+                label_text = f"{total:.2e}"
+            else:
+                label_text = f"{total:.3g}"
+            
+            ax.text(
+                i, bar_height + offset, label_text,
+                ha='center', va='bottom',
+                bbox=dict(facecolor='white', edgecolor='none', pad=1.0)
+            )
+        
+        # Labels & legend
+        unit = factor_units.get(factor, "arbitrary units")
+        ax.set_ylabel(f"{factor} ({unit} per kg PE)")
+        ax.legend(loc="best")
+        #ax.set_title(f"{factor} of PE Production")
+        plt.tight_layout()
+        
+        # Save each plot by factor name
+        # plt.savefig("./results/pallet_wrap/" + f"{factor}_PE_barchart.png", dpi=300, bbox_inches="tight")
+        # plt.show()
+
