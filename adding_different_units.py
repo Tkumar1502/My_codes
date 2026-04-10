@@ -12,7 +12,7 @@ git commit -am "your messsage" && git push
 
 #adding back from work pc 5:16-4/3/26
 import biosteam as bst
-#bst.settings.ID_magic = False
+bst.settings.ID_magic = False
 from plastics import strap
 from chaospy.distributions import Uniform
 import pandas as pd
@@ -36,7 +36,7 @@ bst.preferences.dark_mode()
 processing_capacity = 325 #tons/year                        #should this be in ktons or tons
 
 process = strap.BaselineSTRAPProcess(
-    scenario = 'PE/Xylene',
+    scenario = 'HDPE/Xylene',
     target_plastic_percent = 13.7, #HDPE from the impellers (avg)
     
     processing_capacity = processing_capacity,
@@ -77,7 +77,7 @@ class HandSorting(bst.Unit):
             }
         return pd.DataFrame(results)
     
-  
+    
     
 
 
@@ -110,7 +110,7 @@ S_mag.outs[0] = process.P3.ins[0]
 units.append(S_mag)
 
 T_mag = bst.StorageTank(ins= S_mag.outs[1], outs='NdFeB Magnets')
-# T_mag.outs[0] = process.leftover_plastic
+#T_mag.outs[0] = process.NdFeB_Magnets
 process.NdFeB_Magnets = T_mag.outs[0]
 units.append(T_mag)
 
@@ -123,6 +123,7 @@ units.remove(process.M2)
 
 
 process.U6.outs[0].ID = 'Impurities'
+process.M2.disconnect()
 
 #removing the streams
 process.M3.ins[:] = [process.M3.ins[i] for i in (0, 2, 3)]
@@ -144,10 +145,9 @@ process.tea.operating_hours = process.tea.operating_days*(hours_in_shifts)
 
 
 #define products and set sale prices
-products = [process.PE_resin, process.NdFeB_Magnets]             #shouldn't this be process.products
-process.PE_resin.price = 1.20
+process.products[:] = [process.HDPE_resin, process.NdFeB_Magnets]          #shouldn't this be process.products
+process.HDPE_resin.price = 1.20
 process.NdFeB_Magnets.price = 100
-
 
 #bounds for sensitivity analysis
 process.set_polymer_mass_fraction.bounds = (0.15, 0.35)
@@ -162,8 +162,6 @@ process.set_centrifuged_plastic_solvent_content.bounds = (25,75)
 process.set_feedstock_distance.bounds = (50,1000)
 process.set_feedstock_price.bounds = (0.03, 0.08)           #can be updated when we include handsorting in it
 
-
-
 #set baseline metrices
 process.set_dissolution_temperature.baseline = 373
 process.set_solvent_loss.baseline = 0.1
@@ -172,7 +170,6 @@ process.set_dissolution_capacity.baseline = 2.19            #needs to adjusted, 
 process.set_precipitation_temperature.baseline = 45+273
 process.set_feedstock_price.baseline = 0.25                 #will be adjusted with handsorting
 process.set_IRR.baseline = 0.15
-
 
 #why this loop is here
 for i in process.parameters:
@@ -630,7 +627,7 @@ def lca_factor_3bar(
     for factor in factors:
         # STRAP PE waste-to-energy table
         table = bst.report.lca_displacement_allocation_table(
-            process.system, factor, products,
+            process.system, factor, process.products,
         )
 
         # Read landfill data from Excel
@@ -767,7 +764,7 @@ def lca_factor_barcharts(
         table = bst.report.lca_displacement_allocation_table(
             process.system,
             factor,
-            products,
+            process.products,
         )
         
         print(table)
