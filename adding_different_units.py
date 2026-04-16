@@ -37,7 +37,7 @@ processing_capacity = 325 #tons/year                        #should this be in k
 
 process = strap.BaselineSTRAPProcess(
     scenario = 'HDPE/Xylene',
-    target_plastic_percent = 13.7, #HDPE from the impellers (avg)
+    target_plastic_percent = 0.14, #HDPE from the impellers (avg)
     
     processing_capacity = processing_capacity,
     sell_leftover_plastic = True,
@@ -102,7 +102,8 @@ process.M2.outs[0].ID = 'NdFeB Magnets'
 process.U9.outs[0].ID = 'HDPE resins'
 
 #creating a storage tankf for magnets
-S_mag = bst.Splitter(split = 0.137)
+S_mag = bst.Splitter(split=1)
+S_mag.isplit['BulkPlastic'] = 1 - 0.14
 S_mag.ins[0] = process.T4.outs[0]
 S_mag.outs[0] = process.P3.ins[0]
 
@@ -145,7 +146,10 @@ process.tea.operating_hours = process.tea.operating_days*(hours_in_shifts)
 
 
 #define products and set sale prices
-process.products[:] = [process.HDPE_resin, process.NdFeB_Magnets]          #shouldn't this be process.products
+
+products = [process.NdFeB_Magnets, process.HDPE_resin]
+
+process.products[:] = [process.HDPE_resin, process.NdFeB_Magnets]#, process.NdFeB_Magnets]          #shouldn't this be process.products
 process.HDPE_resin.price = 1.20
 process.NdFeB_Magnets.price = 100
 
@@ -165,10 +169,10 @@ process.set_feedstock_price.bounds = (0.03, 0.08)           #can be updated when
 #set baseline metrices
 process.set_dissolution_temperature.baseline = 373
 process.set_solvent_loss.baseline = 0.1
-process.set_polymer_mass_fraction.baseline = 0.137
+process.set_polymer_mass_fraction.baseline = 0.14
 process.set_dissolution_capacity.baseline = 2.19            #needs to adjusted, too diluted     
 process.set_precipitation_temperature.baseline = 45+273
-process.set_feedstock_price.baseline = 0.25                 #will be adjusted with handsorting
+process.set_feedstock_price.baseline = 0.05                 #will be adjusted with handsorting
 process.set_IRR.baseline = 0.15
 
 #why this loop is here
@@ -832,4 +836,35 @@ def lca_factor_barcharts(
         # Save each plot by factor name
         # plt.savefig("./results/pallet_wrap/" + f"{factor}_PE_barchart.png", dpi=300, bbox_inches="tight")
         # plt.show()
+
+
+
+
+#%% LCA tables
+inventory_table  = bst.report.lca_inventory_table(
+    systems=[process.system],keys=GWP,items=[process.products]
+    )
+
+
+GWP_table = bst.report.lca_displacement_allocation_table(
+    [process.system],
+    'GWP',
+    products, 
+)
+
+revenue_allocation = bst.report.lca_property_allocation_factor_table(
+    [process.system],
+    property='revenue',
+)
+
+energy_allocation = bst.report.lca_property_allocation_factor_table(
+    [process.system],
+    property='energy',
+)
+
+gwp_allocation = bst.report.lca_displacement_allocation_factor_table(
+    [process.system],
+    items = products,
+    key =   GWP
+)
 

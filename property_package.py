@@ -107,7 +107,7 @@ STRAP_chemicals_outline = bst.ChemicalsOutline([
     
     bst.ChemicalDraft(
         'NdFeB',
-        aliases=set(['Neodymium magnet']),
+        aliases=set(['NdFeB']),
         formula='NdFeB',
         search_db=False,
         phase='s',
