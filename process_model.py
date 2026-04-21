@@ -4,7 +4,7 @@
 """
 import biosteam as bst
 from .property_package import STRAP_chemicals_outline, create_property_package, create_property_package_MSW
-from .process_settings import GWP as iGWP, FFC as iFFC, WU as iWU, load_STRAP_MSW_process_settings, load_process_settings
+from .process_settings import GWP as GWP_key, load_process_settings
 from .systems import (
     create_single_layer_batch_separation_system, 
     create_multilayer_batch_separation_system,
@@ -12,7 +12,7 @@ from .systems import (
 )
 from .tea import create_baseline_tea
 from .data import price_distributions_2023 as dist
-from .data.lca_characterization_factors import indicators, set_CFs
+from .data.lca_characterization_factors import GWP_characterization_factors as CFs, set_GWPCF
 from chaospy import distributions as shape
 from plastics import strap
 from biosteam.utils import CABBI_colors, GG_colors, colors
@@ -26,12 +26,11 @@ __all__ = (
     'BaselineSTRAPProcess',
     'STRAPMSWProcess',
     'STRAPProcessPE',
+    'MagnetRecovery',
     'define_solvent',
     'define_dissolution',
     'define_precipitation',
 )
-
-CFs = indicators[iGWP]
 
 # %% Old STRAP-MSW compositional analysis
 # import biosteam as bst
@@ -587,7 +586,7 @@ class STRAPMSWProcess(bst.ProcessModel):
         return chemicals
         
     def create_system(self):
-        load_STRAP_MSW_process_settings()
+        load_process_settings()
         scenario = self.scenario
         self.dissolution_step = dissolution_step = getattr(strap.dissolution_steps, f'{scenario.target_plastic }_{scenario.solvent}_dissolution')()
         self.precipitation_step = precipitation_step = getattr(strap.precipitation_steps, f'{scenario.target_plastic }_{scenario.solvent}_precipitation')()
@@ -634,7 +633,7 @@ class STRAPMSWProcess(bst.ProcessModel):
         CO2_bulk_plastic = self.chemicals.BulkPlastic.atoms['C'] * 44.01
         self.direct_nonbiogenic_emissions = lambda: self.lignin.imol['BulkPlastic'] * CO2_bulk_plastic + self.natural_gas.F_mol * 44.01
         system.define_process_impact(
-            key=iGWP,
+            key=GWP_key,
             name='Direct non-biogenic emissions',
             basis='kg',
             inventory=self.direct_nonbiogenic_emissions,
@@ -703,15 +702,15 @@ class STRAPMSWProcess(bst.ProcessModel):
         ethanol_storage = self.ethanol.source
         ethanol_storage.define_credit('Ethanol RIN D3', self.ethanol)
         bst.PowerUtility.set_CF(
-            iGWP, # [kg*CO2*eq / kWhr] From GREET; NG-Fired Simple-Cycle Gas Turbine CHP Plant 
+            GWP_key, # [kg*CO2*eq / kWhr] From GREET; NG-Fired Simple-Cycle Gas Turbine CHP Plant 
             0.36
         )
         self.natural_gas.set_CF(
-            iGWP,
+            GWP_key,
             0.33, # Natural gas from shell conventional recovery, GREET; includes non-biogenic emissions
         )
         self.solvent.set_CF(
-            iGWP,
+            GWP_key,
             0.8199, # GREET; Mixed xylenes production from catalytic reforming of naphtha
         )
         
@@ -736,25 +735,18 @@ class STRAPMSWProcess(bst.ProcessModel):
         bisulfite = get_renamed_stream('bisulfite_R602', 'bisulfite')
         polishing_filter_air = get_renamed_stream('air_R603', 'polishing_filter_air')
         polishing_filter_vent = get_renamed_stream('vent_R603', 'polishing_filter_vent')
-        set_CFs(NaOCl, 'NaOCl')
-        set_CFs(citric_acid, 'citric acid')
-        set_CFs(bisulfite, 'bisulfite')
-        set_CFs(H3PO4, 'H3PO4')
-        set_CFs(lime, 'lime', dilution=0.046) # Diluted with water
-        set_CFs(denaturant, 'gasoline')
-        set_CFs(FGD_lime, 'lime', dilution=0.451)
-        set_CFs(cellulase, 'cellulase', dilution=0.05) 
-        set_CFs(urea, 'urea')
-        set_CFs(caustic, 'NaOH', 0.5)
-        set_CFs(HCl, 'HCl')
-        set_CFs(NaOH, 'NaOH')
-        for i in (self.saccharification_water,
-                  self.stripping_water,
-                  self.dilution_water,
-                  self.cooling_tower_makeup_water,
-                  self.boiler_makeup_water):
-            i.set_CF(iWU, 1)
-        set_CFs(self.bioreactor_cleaning_chemicals, 'NaOH', 0.01)
+        set_GWPCF(NaOCl, 'NaOCl')
+        set_GWPCF(citric_acid, 'citric acid')
+        set_GWPCF(bisulfite, 'bisulfite')
+        set_GWPCF(H3PO4, 'H3PO4')
+        set_GWPCF(lime, 'lime', dilution=0.046) # Diluted with water
+        set_GWPCF(denaturant, 'gasoline')
+        set_GWPCF(FGD_lime, 'lime', dilution=0.451)
+        set_GWPCF(cellulase, 'cellulase', dilution=0.05) 
+        set_GWPCF(urea, 'urea')
+        set_GWPCF(caustic, 'NaOH', 0.5)
+        set_GWPCF(HCl, 'HCl')
+        set_GWPCF(NaOH, 'NaOH')
         scenario = self.scenario
         dissolution_step = self.dissolution_step
         precipitation_step = self.precipitation_step
@@ -862,7 +854,7 @@ class STRAPMSWProcess(bst.ProcessModel):
         @metric(name='Carbon intensity', units='kg*CO2e/GGE')
         def GWP_energy():
             return system.get_property_allocated_impact(
-                key=iGWP, name='energy', basis='GGE',
+                key=GWP_key, name='energy', basis='GGE',
                 products=[self.resin, self.ethanol]
             ) # kg-CO2e / kJ
         
@@ -885,60 +877,6 @@ class STRAPMSWProcess(bst.ProcessModel):
             return GWP * GGE_per_kg
         
         self.GWP_resin = GWP_polymer_resin
-        
-        @metric(name='Fossil fuel consumption', units='MJ/GGE')
-        def FFC_energy():
-            return system.get_property_allocated_impact(
-                key=iFFC, name='energy', basis='GGE',
-                products=[self.resin, self.ethanol]
-            ) # MJ / GGE
-        
-        @metric(units='MJ/kWh', name='Fossil fuel consumption', element='electricity')
-        def FFC_electricity():
-            FFC = FFC_energy()
-            return bst.units_of_measure.convert(FFC, '1/GGE', '1/kWh')
-        
-        @metric(units='MJ/L', name='Fossil fuel consumption', element='ethanol')
-        def FFC_ethanol():
-            FFC = FFC_energy()
-            return FFC / 1.5 / L_per_gal # per liter of ethanol
-        
-        @metric(units='MJ/kg', name='Fossil fuel consumption', element='polymer resin')
-        def FFC_polymer_resin():
-            FFC = FFC_energy()
-            mass_flow = self.resin.F_mass # kg / hr
-            energy_flow = self.resin.get_property('LHV', 'GGE/hr')
-            GGE_per_kg = energy_flow / mass_flow
-            return FFC * GGE_per_kg
-        
-        self.FFC_resin = FFC_polymer_resin
-        
-        @metric(name='Water usage', units='L/GGE')
-        def WU_energy():
-            return system.get_property_allocated_impact(
-                key=iWU, name='energy', basis='GGE',
-                products=[self.resin, self.ethanol]
-            ) # kg-CO2e / kJ
-        
-        @metric(units='L/kWh', name='Water usage', element='electricity')
-        def WU_electricity():
-            WU = WU_energy()
-            return bst.units_of_measure.convert(WU, '1/GGE', '1/kWh')
-        
-        @metric(units='L/L', name='Water usage', element='ethanol')
-        def WU_ethanol():
-            WU = WU_energy()
-            return WU / 1.5 / L_per_gal # per liter of ethanol
-        
-        @metric(units='L/kg', name='Water usage', element='polymer resin')
-        def WU_polymer_resin():
-            WU = WU_energy()
-            mass_flow = self.resin.F_mass # kg / hr
-            energy_flow = self.resin.get_property('LHV', 'GGE/hr')
-            GGE_per_kg = energy_flow / mass_flow
-            return WU * GGE_per_kg
-        
-        self.WU_resin = WU_polymer_resin
         
         @metric(units='%')
         def IRR():
@@ -1264,6 +1202,18 @@ class STRAPMSWProcess(bst.ProcessModel):
         def set_RIN_D3_price(price): # Triangular distribution fitted over the past 10 years Sep 2009 to Nov 2020
             bst.settings.register_credit('Ethanol RIN D3', price * ethanol_L_per_kg)
         
+        # set_GWPCF(NaOCl, 'NaOCl')
+        # set_GWPCF(citric_acid, 'citric acid')
+        # set_GWPCF(bisulfite, 'bisulfite')
+        # set_GWPCF(lime, 'lime', dilution=0.046) # Diluted with water
+        # set_GWPCF(denaturant, 'gasoline')
+        # set_GWPCF(FGD_lime, 'lime', dilution=0.451)
+        # set_GWPCF(cellulase, 'cellulase', dilution=0.05) 
+        # set_GWPCF(urea, 'urea')
+        # set_GWPCF(caustic, 'NaOH', 0.5)
+        # set_GWPCF(HCl, 'HCl')
+        # set_GWPCF(NaOH, 'NaOH')
+        
         # DO NOT DELETE:
         # natural_gas.phase = 'g'
         # natural_gas.set_property('T', 60, 'degF')
@@ -1300,8 +1250,6 @@ class STRAPMSWProcess(bst.ProcessModel):
         self.cellulase_mixer.loading_basis = lambda: MSW.imass['Glucan']
         experimental_cellulase_loading = 100 * self.cellulase_mixer.enzyme_loading
         NREL_cellulase_loading = 100 * 0.00667
-        CFs = indicators[iGWP]
-        
         @default_gwp(CFs['cellulase'], name='GWP', 
                      element='Cellulase', units='kg*CO2e/kg', group='lca')
         def set_cellulase_GWP(value):
@@ -1711,8 +1659,7 @@ class BaselineSTRAPProcess(bst.ProcessModel):
         Scenario('Toluene', 'PE', 50, 5000, False, True, True),
         Scenario(('Toluene', 'DMSOWater'), ('PE', 'EVOH'), (50, 3.22), 5000, False, True, True),
         Scenario('Xylene', 'PE', 90, 5e3, False, False, False),
-        Scenario('DMF', 'PVDF', 90, 5e3, False, False, False),
-        Scenario('Xylene', 'HDPE', 90, 5e3, False, False, False),
+        Scenario('Xylene', 'HDPE', 14, 325, False, False, False)
     ]
     _scenarios = {
         f'{i.target_plastic}/{i.solvent}': i for i in _scenarios
@@ -1822,7 +1769,7 @@ class BaselineSTRAPProcess(bst.ProcessModel):
         self.tea = create_baseline_tea(system)
         self.direct_nonbiogenic_emissions = lambda: self.emissions.imass['CO2'] * system.operating_hours
         system.define_process_impact(
-            key=iGWP,
+            key=GWP_key,
             name='Direct non-biogenic emissions',
             basis='kg',
             inventory=self.direct_nonbiogenic_emissions,
@@ -1917,7 +1864,7 @@ class BaselineSTRAPProcess(bst.ProcessModel):
         else:
             _, *products = system.outs
         
-        self.products = products = list(products)
+        self.products = products
         model = bst.Model(system)
         parameter = model.parameter
         metric = model.metric
@@ -1942,14 +1889,14 @@ class BaselineSTRAPProcess(bst.ProcessModel):
         @metric(units='kg*CO2e/kg')
         def GWP():
             if scenario.burn_leftover_plastic:
-                GWP_material = system.get_total_feeds_impact(iGWP)
+                GWP_material = system.get_total_feeds_impact(GWP_key)
                 GWP_electricity_production = CFs['Electricity'] * (self.system.get_electricity_production() - self.system.get_electricity_consumption())
-                GWP_emissions = system.get_process_impact(iGWP) # kg CO2 eq. / y
+                GWP_emissions = system.get_process_impact(GWP_key) # kg CO2 eq. / y
                 GWP_total = GWP_material + GWP_emissions - GWP_electricity_production # kg CO2 eq. / y
                 return GWP_total / (self.PE_resin.F_mass * self.tea.operating_hours)
             else:
                 GWP = system.get_property_allocated_impact(
-                    key=iGWP, name='mass', basis='kg',
+                    key=GWP_key, name='mass', basis='kg',
                     products=products
                 ) # kg-CO2e / kg
                 if GWP < 0: breakpoint()
@@ -1989,7 +1936,7 @@ class BaselineSTRAPProcess(bst.ProcessModel):
                     ) # MJ / kg
                     if WU < 0: breakpoint()
             except:
-                WU = None
+                WU=None
             return WU
         
         #human toxicity - CANCER
@@ -2442,7 +2389,7 @@ class BaselineSTRAPProcess(bst.ProcessModel):
             if not hasattr(self, i): setattr(self, i, bst.Stream(i))
         if facilities:
             self.natural_gas.set_CF(
-                iGWP,
+                GWP_key,
                 0.33, # Natural gas from shell conventional recovery, GREET; includes non-biogenic emissions
             )
             self.natural_gas.set_CF(
@@ -2451,12 +2398,12 @@ class BaselineSTRAPProcess(bst.ProcessModel):
             )
             
             #TODO: ADD NG WATER USE
-        # TODO: Adjust solvent CF accordingly
+        # TODO: Adjust solvent             CF accordingly
         if scenario.multistep:
             for i in self.dissolution_steps:
                 solvent = getattr(self, i.solvent)
                 solvent.set_CF(
-                    iGWP,
+                    GWP_key,
                     0.8199, # GREET; Mixed xylenes production from catalytic reforming of naphtha
                 )
                 solvent.set_CF(
@@ -2465,7 +2412,7 @@ class BaselineSTRAPProcess(bst.ProcessModel):
                 )
         else:
             self.solvent.set_CF(
-                iGWP,
+                GWP_key,
                 0.8199, # GREET; Mixed xylenes production from catalytic reforming of naphtha
             )
             self.solvent.set_CF(
@@ -2490,15 +2437,22 @@ class STRAPProcessPE(bst.ProcessModel):
             burn_leftover_plastic=False,
             
         ):
-        if solvent is None:
-             solvent = 'Xylene'
+        
         chemicals = create_property_package()
         bst.settings.set_thermo(chemicals)
+        
+        if solvent is None:
+             solvent = 'Xylene'
+             
         load_process_settings()
+        
+        
         if dissolution_step is None:
             dissolution_step = strap.dissolution_steps.PE_Xylene_dissolution()
         if precipitation_step is None:
             precipitation_step = strap.precipitation_steps.PE_Xylene_precipitation()
+        
+        
         dissolution_step.solvent = precipitation_step.solvent = solvent
         dissolution_step.T = 378 #K or 105 C
         precipitation_step.T = 323 #K
@@ -2526,7 +2480,7 @@ class STRAPProcessPE(bst.ProcessModel):
         self.tea = create_baseline_tea(system)
         
         system.define_process_impact(
-            key=iGWP,
+            key=GWP_key,
             name='Direct non-biogenic emissions',
             basis='kg',
             inventory=lambda: self.emissions.imass['CO2'] * system.operating_hours,
@@ -2557,7 +2511,7 @@ class STRAPProcessPE(bst.ProcessModel):
         @metric(units='kg*CO2e/kg', element='product')
         def GWP():
             GWP = system.get_property_allocated_impact(
-                key=iGWP, name='mass', basis='kg',
+                key=GWP_key, name='mass', basis='kg',
                 products=[i for i in system.outs if 'resin' in i.ID or 'product' in i.ID]
             ) # kg-CO2e / kg
             if GWP < 0: breakpoint()
@@ -2722,9 +2676,691 @@ class STRAPProcessPE(bst.ProcessModel):
             if i.baseline is not None: i.setter(i.baseline)
         if simulate: system.simulate()
         self.natural_gas.set_CF(
-            iGWP,
+            GWP_key,
             0.33, # Natural gas from shell conventional recovery, GREET; includes non-biogenic emissions
         )
         cls.cache[key] = self
         return self
                         
+    
+  
+    
+  
+# Neodymium Magnet Recovery
+class MagnetHandSorting(bst.Unit):
+    N_shifts = 3
+    N_workers = 3
+    
+    def _init(self, N_workers,N_shifts):
+        self.N_workers = N_workers
+        self.N_shifts = N_shifts
+        self._cost()
+        self.total_salary = 5e4*N_shifts*N_workers*1.6
+        
+    def _cost(self):
+        worker_salary = 5e4
+        self.total_salary = worker_salary*self.N_shifts*self.N_workers*1.6
+    
+    def results(self):
+        import pandas as pd
+        results = {
+            "Parameters": ['Workers', 'Shifts (8hrs/shift)','Scaling(Vacation etc.)','Total Labor Cost'],
+            "Value":[self.N_workers, self.N_shifts, 1.6, self.total_salary]
+            }
+        return pd.DataFrame(results)
+
+
+
+class MagnetRecovery(bst.ProcessModel):
+    """
+    create a model for using STRAP to recover Neodymium magnets
+    
+    E.g. 
+    >>> from plastics.strap import MagnetRecovery
+    >>> pm = MagnetRecovery(simulate = False)
+    
+    
+    
+    .... another things 
+    """
+    
+    
+    
+    @bst.scenario
+    class Scenario:
+        #copy paste from above
+       solvent: str|tuple[str, ...] = '# Solvent used to separate the target plastic'
+       target_plastic: str|tuple[str, ...] = '# The polymer layer being dissolved'
+       target_plastic_percent: float|tuple[float, ...] = '# Fraction in feedstock [%]'
+       processing_capacity: float = 5000, '# Feedstock flow rate [MT-plastic/yr]'
+       sell_leftover_plastic: bool = False, '# Whether the MSP will include all products'
+       burn_leftover_plastic: bool = True, '# Produce heat and power from leftover plastic'
+       facilities: bool = True, '# On-site cooling tower, heat and power generation'
+       precipitation_temperature_format: str = 'constant', "# Use 'drop' for % temperature drop to solvent melting point. Use 'constant' to set in Kelvin."
+       precipitation_configuration: str = 'integrated heat transfer', "# Must be either 'solvent mixing' or 'integrated heat transfer'."
+       turbogenerator: bool = True, '# On-site electricity generation'
+       
+       @property
+       def N_steps(self):
+           return 1
+    
+    
+    @classmethod
+    def get_scenario(cls, scenario):
+        return cls._scenarios[scenario]
+    
+    
+    @classmethod
+    def set_scenario(cls, scenario):
+        cls._scenarios[f'{scenario.target_plastic}/{scenario.solvent}'] = scenario
+        
+    _scenario =[
+        Scenario('Xylene', 'HDPE', 14, 325, False, False, False)
+            ]
+    _scenario = {
+            f'{i.target_plastic}/{i.solvent}': i for i in _scenario
+            }
+        
+    @property
+    def name(self):
+        scenario = self.scenario
+        
+        name = f"{scenario.solvent}_{scenario.target_plastic}"
+        if scenario.sell_leftover_plastic:
+            name += "_sell_leftover_plastic"
+        elif scenario.burn_leftover_plastic:
+            name += "_burn_leftover_plastic"
+        if scenario.facilities:
+            name += "_with_facilities"
+            
+        return name
+    
+    @classmethod
+    def default_scenario(cls):
+        return cls._scenario['HDPE/Xylene'] 
+    
+    @classmethod
+    def as_scenario(cls,scenario):
+        if isinstance(scenario,(str,tuple)):
+            return cls._scenarios[scenario]
+        
+        else:
+            raise TypeError('invalid scenario')
+    
+    def create_thermo(self):
+        scenario = self.scenario
+        
+        default_plastic_solvent_pair(scenario.target_plastic, scenario.solvent)
+        chemicals = create_property_package()
+        for i in solvent_mixtures: chemicals.define_groups(*i)
+        return chemicals
+    
+    def create_system(self):
+        scenario = self.scenario
+        chemicals = self.chemicals
+        load_process_settings()
+        
+        #changing CEPCI
+        bst.settings.CEPCI = 836.9
+        
+        dissolution_step = getattr(strap.dissolution_steps, f'{scenario.target_plastic }_{scenario.solvent}_dissolution')()
+        precipitation_step = getattr(strap.precipitation_steps,f'{scenario.target_plastic}_{scenario.solvent}_precipitation')()
+        
+        facilities = scenario.facilities
+        target_plastic_percent = scenario.target_plastic_percent
+        
+        bulk_plastic_percent = 100 - target_plastic_percent
+        chemicals.define_group('Plastic', [scenario.target_plastic, 'NdFeB'], [target_plastic_percent, bulk_plastic_percent], wt=True)
+        
+        chemicals.define_group('Solutes', ['Minerals', 'Solubles'], [0.8, 0.2], wt=True)
+        
+        system = create_single_layer_batch_separation_system(
+            dissolution_step=dissolution_step,
+            precipitation_step=precipitation_step,
+            facilities=facilities,
+            relative_molar_tolerance=1e-6, 
+            molar_tolerance=1e-2,
+            method='fixed-point',
+            burn_leftover_plastic=scenario.burn_leftover_plastic,
+            core_facilities=True,
+            precipitation_configuration=scenario.precipitation_configuration,
+            turbogenerator=scenario.turbogenerator,
+        )
+        for i, step in zip(system.subsystems, [dissolution_step]):
+            i.ID = f"{step.plastic}/{step.solvent}"
+        
+        self.dissolution_step= dissolution_step
+        self.precipitation_step = precipitation_step
+        
+        #making object of Handsorting class
+        self.HS = MagnetHandSorting(ins = system.ins[0],N_workers=3,N_shifts=3)  #change workers and shifts
+        
+        u = system.flowsheet.unit
+           
+        u.T1.ins[0] = self.HS.outs[0]
+        u.U3.ins[0] = u.T1.outs[0]
+        
+        
+        
+        self.HS.outs[0].ID = 'Impellers'         #changing the sorted feed of interest to impellers
+        #process.M2.outs[0].ID = 'NdFeB Magnets'
+        u.U9.outs[0].ID = 'HDPE resins'
+
+        #creating a splitter for magnets
+        self.S_mag = bst.Splitter(split=1)
+        self.S_mag.isplit['NdFeB'] =  0
+        
+        self.S_mag.ins[0] = u.T4.outs[0]
+        self.S_mag.outs[0] = u.P3.ins[0]
+        
+        u.P3.outs[0] = u.U6.ins[0]
+        
+        #making it neat and clean, removing empty stream from M3 mixer
+        u.M3.ins[:] = [u.M3.ins[i] for i in (0,2,3)]
+        
+        system.outs[:] = [s for s in system.outs if 'M2' not in s.ID]
+        
+        system.units.remove(u.U1)
+        system.units.remove(u.U4)
+        system.units.remove(u.U5)
+        system.units.remove(u.M2)
+        system.units.append(self.HS)
+        system.units.append(self.S_mag)
+        
+        system.update_configuration()
+        
+        
+        self.tea = create_baseline_tea(system)
+        
+        self.direct_nonbiogenic_emissions = lambda: self.emissions.imass['CO2'] * system.operating_hours
+        system.define_process_impact(
+            key=GWP_key,
+            name='Direct non-biogenic emissions',
+            basis='kg',
+            inventory=self.direct_nonbiogenic_emissions,
+            CF=1.,
+        )
+        system.define_process_impact(
+            key='FFC',
+            name='Direct non-biogenic emissions',
+            basis='kg',
+            inventory=lambda: 0,
+            CF=1.,
+        )
+        
+        #add water consumption
+        system.define_process_impact(
+            key='WU',
+            name='Direct non-biogenic emissions',
+            basis='kg',
+            inventory=lambda: 0,
+            CF=1.,
+        )
+        
+        #add human toxicity, cancer
+        system.define_process_impact(
+            key='HTC',
+            name='Human Toxicity, cancer',
+            basis='kg',
+            inventory=lambda: 0,
+            CF=1.,
+        )
+        
+        #add human toxicity, non-cancer
+        system.define_process_impact(
+            key='HTNC',
+            name='Human Toxicity, non-cancer',
+            basis='kg',
+            inventory=lambda: 0,
+            CF=1.,
+        )
+        
+        #acidification
+        system.define_process_impact(
+            key='ACD',
+            name='Acidification',
+            basis='kg',
+            inventory=lambda: 0,
+            CF=1.,
+        )
+        
+        #freshwater ecotoxicity
+        system.define_process_impact(
+            key='ETOX',
+            name='Ecotoxicity',
+            basis='kg',
+            inventory=lambda: 0,
+            CF=1.,
+        )
+        
+        #ozone depletion
+        system.define_process_impact(
+            key='OZD',
+            name='Ozone depletion',
+            basis='kg',
+            inventory=lambda: 0,
+            CF=1.,
+        )
+        
+        #Photochemical Ozone Creation Potential
+        system.define_process_impact(
+            key='POCP',
+            name='Photochemical Ozone Creation Potential',
+            basis='kg',
+            inventory=lambda: 0,
+            CF=1.,
+        )
+        
+        system.set_tolerance(mol=1e-6, rmol=1e-9, T=1e-6, rT=1e-9, subsystems=True, maxiter=200)      
+        self.HDPE_resins = u.U9.outs[0]
+        self.HDPE_resins.ID = 'HDPE resins'
+        
+        
+        self.NdFeB_Magnets = self.S_mag.outs[1]
+        self.NdFeB_Magnets.ID = 'neodymium magnets'
+        
+        #self.__dict__['products'] = [self.HDPE_resins,self.NdFeB_Magnets]
+        
+        return system
+    
+    
+    def create_model(self):
+        
+        
+        scenario = self.scenario
+        if not scenario.turbogenerator: self.BT = self.B
+        facilities = scenario.facilities
+        processing_capacity = scenario.processing_capacity
+        target_plastic_percent = scenario.target_plastic_percent
+        system = self.system
+        if scenario.sell_leftover_plastic:
+            products = system.outs
+            
+            #TO DO: if sell_leftover_pastic=False, set leftover_plastic.price = 0
+            
+        else:
+            _, *products = system.outs
+        
+        self.products = [self.HDPE_resins, self.NdFeB_Magnets]             # changed from products
+        model = bst.Model(system)
+        parameter = model.parameter
+        metric = model.metric
+        self.tea_parameters = []
+        def tea_param(f):
+            self.tea_parameters.append(f)
+            return f
+        
+        self.lca_parameters = []
+        def lca_param(f):
+            self.lca_parameters.append(f)
+            return f
+        
+        self.general_parameters = []
+        def gen_param(f):
+            self.tea_parameters.append(f)
+            self.lca_parameters.append(f)
+            self.general_parameters.append(f)
+            return f
+        
+        '''#updating labor cost
+        @self.system.add_specification
+        def update_labor():
+            strap_labor = 580000 # 2 x operators x 4.8 x $50K, 1 engineer x $100k
+            self.tea.labor_cost = strap_labor + self.HS.total_salary or 0
+            self.tea.operating_days = 328.5
+        '''
+        
+        
+        #global warming potential
+        @metric(units='kg*CO2e/kg')
+        def GWP():
+            if scenario.burn_leftover_plastic:
+                GWP_material = system.get_total_feeds_impact(GWP_key)
+                GWP_electricity_production = CFs['Electricity'] * (self.system.get_electricity_production() - self.system.get_electricity_consumption())
+                GWP_emissions = system.get_process_impact(GWP_key) # kg CO2 eq. / y
+                GWP_total = GWP_material + GWP_emissions - GWP_electricity_production # kg CO2 eq. / y
+                return GWP_total / (self.HDPE_resin.F_mass * self.tea.operating_hours)
+            else:
+                GWP = system.get_property_allocated_impact(
+                    key=GWP_key, name='mass', basis='kg',
+                    products=products
+                ) # kg-CO2e / kg
+                if GWP < 0: breakpoint()
+            return GWP
+        
+        #fossil fuel consumption
+        @metric(units='MJ/kg')
+        def FFC():
+            if scenario.burn_leftover_plastic:
+                FFC_material = system.get_total_feeds_impact('FFC')
+                FFC_electricity_production = CFs['Electricity'] * (self.system.get_electricity_production() - self.system.get_electricity_consumption())
+                #FFC_emissions = system.get_process_impact('FFC') # kg CO2 eq. / y
+                FFC_total = FFC_material  - FFC_electricity_production # kg CO2 eq. / y
+                return FFC_total / (self.PE_resin.F_mass * self.tea.operating_hours)
+            else:
+                FFC = system.get_property_allocated_impact(
+                    key='FFC', name='mass', basis='kg',
+                    products=[i for i in products if 'resin' in i.ID or 'product' in i.ID]
+                ) # MJ / kg
+                if FFC < 0: breakpoint()
+            return FFC
+        
+        #water usage
+        @metric(units='m3/kg')
+        def WU():
+            try:
+                if scenario.burn_leftover_plastic:
+                    WU_material = system.get_total_feeds_impact('WU')
+                    WU_electricity_production = CFs['Electricity'] * (self.system.get_electricity_production() - self.system.get_electricity_consumption())
+                    #FFC_emissions = system.get_process_impact('FFC') # kg CO2 eq. / y
+                    WU_total = WU_material  - WU_electricity_production # kg CO2 eq. / y
+                    return WU_total / (self.PE_resin.F_mass * self.tea.operating_hours)
+                else:
+                    WU = system.get_property_allocated_impact(
+                        key='WU', name='mass', basis='kg',
+                        products=[i for i in products if 'resin' in i.ID or 'product' in i.ID]
+                    ) # MJ / kg
+                    if WU < 0: breakpoint()
+            except:
+                WU=None
+            return WU
+        
+        #human toxicity - CANCER
+        @metric(units='CTUh/kg')
+        def HTC():
+            if scenario.burn_leftover_plastic:
+                HTC_material = system.get_total_feeds_impact('HTC')
+                HTC_electricity_production = CFs['Electricity'] * (self.system.get_electricity_production() - self.system.get_electricity_consumption())
+                #FFC_emissions = system.get_process_impact('FFC') # kg CO2 eq. / y
+                HTC_total = HTC_material  - HTC_electricity_production # kg CO2 eq. / y
+                return HTC_total / (self.PE_resin.F_mass * self.tea.operating_hours)
+            else:
+                HTC = system.get_property_allocated_impact(
+                    key='HTC', name='mass', basis='kg',
+                    products=[i for i in products if 'resin' in i.ID or 'product' in i.ID]
+                ) # MJ / kg
+                if HTC < 0: breakpoint()
+            return HTC
+        
+        #human toxicity - non CANCER
+        @metric(units='CTUh/kg')
+        def HTNC():
+            if scenario.burn_leftover_plastic:
+                HTNC_material = system.get_total_feeds_impact('HTNC')
+                HTNC_electricity_production = CFs['Electricity'] * (self.system.get_electricity_production() - self.system.get_electricity_consumption())
+                #FFC_emissions = system.get_process_impact('FFC') # kg CO2 eq. / y
+                HTNC_total = HTNC_material  - HTNC_electricity_production # kg CO2 eq. / y
+                return HTNC_total / (self.PE_resin.F_mass * self.tea.operating_hours)
+            else:
+                HTNC = system.get_property_allocated_impact(
+                    key='HTNC', name='mass', basis='kg',
+                    products=[i for i in products if 'resin' in i.ID or 'product' in i.ID]
+                ) # MJ / kg
+                if HTNC < 0: breakpoint()
+            return HTNC
+        
+        #acidification
+        @metric(units='MOL H+ eq/kg')
+        def ACD():
+            if scenario.burn_leftover_plastic:
+                ACD_material = system.get_total_feeds_impact('ACD')
+                ACD_electricity_production = CFs['Electricity'] * (self.system.get_electricity_production() - self.system.get_electricity_consumption())
+                #FFC_emissions = system.get_process_impact('FFC') # kg CO2 eq. / y
+                ACD_total = ACD_material  - ACD_electricity_production # kg CO2 eq. / y
+                return ACD_total / (self.PE_resin.F_mass * self.tea.operating_hours)
+            else:
+                ACD = system.get_property_allocated_impact(
+                    key='ACD', name='mass', basis='kg',
+                    products=[i for i in products if 'resin' in i.ID or 'product' in i.ID]
+                ) # MJ / kg
+                if ACD < 0: breakpoint()
+            return ACD
+        
+        #ecotoxicity
+        @metric(units='CTU eq/kg')
+        def ETOX():
+            if scenario.burn_leftover_plastic:
+                ETOX_material = system.get_total_feeds_impact('ETOX')
+                ETOX_electricity_production = CFs['Electricity'] * (self.system.get_electricity_production() - self.system.get_electricity_consumption())
+                #FFC_emissions = system.get_process_impact('FFC') # kg CO2 eq. / y
+                ETOX_total = ETOX_material  - ETOX_electricity_production # kg CO2 eq. / y
+                return ETOX_total / (self.PE_resin.F_mass * self.tea.operating_hours)
+            else:
+                ETOX = system.get_property_allocated_impact(
+                    key='ETOX', name='mass', basis='kg',
+                    products=[i for i in products if 'resin' in i.ID or 'product' in i.ID]
+                ) # MJ / kg
+                if ETOX < 0: breakpoint()
+            return ETOX
+        
+        #ozone depletion
+        @metric(units='kg CFC11 eq/kg')
+        def OZD():
+            if scenario.burn_leftover_plastic:
+                OZD_material = system.get_total_feeds_impact('OZD')
+                OZD_electricity_production = CFs['Electricity'] * (self.system.get_electricity_production() - self.system.get_electricity_consumption())
+                #FFC_emissions = system.get_process_impact('FFC') # kg CO2 eq. / y
+                OZD_total = OZD_material  - OZD_electricity_production # kg CO2 eq. / y
+                return OZD_total / (self.PE_resin.F_mass * self.tea.operating_hours)
+            else:
+                OZD = system.get_property_allocated_impact(
+                    key='OZD', name='mass', basis='kg',
+                    products=[i for i in products if 'resin' in i.ID or 'product' in i.ID]
+                ) # MJ / kg
+                if OZD < 0: breakpoint()
+            return OZD
+        
+        #photochemical ozone creation potential
+        @metric(units='kg CFC11 eq/kg')
+        def POCP():
+            if scenario.burn_leftover_plastic:
+                POCP_material = system.get_total_feeds_impact('POCP')
+                POCP_electricity_production = CFs['Electricity'] * (self.system.get_electricity_production() - self.system.get_electricity_consumption())
+                #FFC_emissions = system.get_process_impact('FFC') # kg CO2 eq. / y
+                POCP_total = POCP_material  - POCP_electricity_production # kg CO2 eq. / y
+                return POCP_total / (self.PE_resin.F_mass * self.tea.operating_hours)
+            else:
+                POCP = system.get_property_allocated_impact(
+                    key='POCP', name='mass', basis='kg',
+                    products=[i for i in products if 'resin' in i.ID or 'product' in i.ID]
+                ) # MJ / kg
+                if POCP < 0: breakpoint()
+            return POCP
+        
+        @metric(units='USD/kg')
+        def MSP():
+            return self.tea.solve_price(products)
+        
+        V_ng = 1.473318463076884 # Natural gas volume at 60 F and 14.73 psi [m3 / kg]
+        
+        # https://www.eia.gov/energyexplained/natural-gas/prices.php
+        # @parameter(analysis='Sobol', group='tea')
+        if facilities:
+            @tea_param
+            @parameter(distribution=dist.natural_gas_price_distribution, element='Natural gas', units='USD/m3',
+                       baseline=4.73 * 35.3146667/1e3)
+            def set_natural_gas_price(price): 
+                self.BT.natural_gas_price = price * V_ng
+    
+        
+        # Processing capacity is entirely arbitrary for now
+        @parameter(
+            bounds=(processing_capacity * 0.5, processing_capacity * 2),
+            element='Feedstock',
+            units='MT/yr',
+            baseline=processing_capacity,
+        )
+        def set_processing_capacity(processing_capacity):
+            self.feedstock.F_mass = processing_capacity * 1000 / self.tea.operating_hours
+        
+        # Feedstock price will be equal to transportation cost.
+        # TODO: Base estimate to transportation cost on availability of 
+        # post-industrial plastic per area.
+        
+        @tea_param
+        @parameter(
+            baseline=0.01,
+            element='Feedstock',
+            units='USD/kg',
+            distribution=shape.Uniform(0, 0.02)
+        )
+        def set_feedstock_price(price):
+            self.feedstock.price = price
+        
+        @gen_param
+        @parameter(
+            baseline = 500, #km
+            element = 'feedstock',
+            units='km',
+            distribution=shape.Uniform(20, 2000)
+        )
+        def set_feedstock_distance(distance):
+            GWP = 'GWP'
+            FFC = 'FFC'
+            WU = 'WU'
+            HTC = 'HTC'
+            HTNC = 'HTNC'
+            ETOX = 'ETOX'
+            ACD = 'ACD'
+            OZD = 'OZD'
+            POCP = 'POCP'
+            #from Articulated lorry transport, Total weight 12-14 t, mix Euro 0-5, consumption mix, to consumer, diesel driven, Euro 0 - 5 mix, cargo, 12 - 14t gross weight / 9.3t payload capacity - RNA
+            self.plastic.set_CF(GWP, distance * 0.083 * 1/1000, ) #distance (km) * .08 kg co2 / (t*km) * t/1000kg EF 2.0
+            self.plastic.set_CF(FFC, distance * 1.08828 * 1/1000, ) #distance (km) * .08 kg co2 / (t*km) * t/1000kg EF 2.0
+            self.plastic.set_CF(WU, distance * 0.00799 * 1/1000, ) #distance (km) * .08 kg co2 / (t*km) * t/1000kg EF 2.0
+            self.plastic.set_CF(HTC, distance * 1.25436e-9 * 1/1000, )
+            self.plastic.set_CF(HTNC, distance * 2.884e-9 * 1/1000, )
+            self.plastic.set_CF(ETOX, distance * 0.02214 * 1/1000, )
+            self.plastic.set_CF(ACD, distance * 0.00065 * 1/1000, )
+            self.plastic.set_CF(OZD, distance * 2.70507e-13 * 1/1000, )
+            self.plastic.set_CF(POCP, distance * 0.0006 * 1/1000, )
+        
+        @tea_param
+        @parameter(
+            element='Cashflow analysis',
+            baseline=0.10,
+            units='%',
+            distribution=shape.Uniform(0.1, 0.2)
+        )
+        def set_IRR(IRR):
+            self.tea.IRR = IRR
+        
+        @gen_param
+        @parameter(
+            baseline=target_plastic_percent / 100.,
+            element='target polymer',
+            distribution=shape.Uniform(0.3, 0.9)
+        )
+        def set_polymer_mass_fraction(mass_fraction):
+            s = self.feedstock
+            F_mass = s.F_mass
+            plastic = self.dissolution_step.plastic
+            s.imass[plastic] = 0
+            other_composition = s.mass / s.F_mass
+            s.mass = other_composition * F_mass * (1 - mass_fraction)
+            s.imass[plastic] = mass_fraction * F_mass
+        
+        def solvent_content(baseline, *args, **kwargs):
+            bounds = (baseline - 10, baseline + 10)
+            return parameter(*args, bounds=bounds, baseline=baseline,
+                             distribution=shape.Uniform(*bounds), 
+                             units='%', **kwargs)
+        
+        @gen_param
+        @solvent_content(
+            100 * self.dissolution_step.solvent_content,
+            element='centrifuged plastic'
+        )
+        def set_centrifuged_plastic_solvent_content(solvent_content):
+            self.dissolution_step.solvent_content = solvent_content / 100
+        
+        baseline = 2.17
+        @tea_param
+        @parameter(
+            baseline=baseline,
+            element='Solvent',
+            units='USD/kg',
+            distribution=shape.Uniform(0.5 * baseline, 1.5 * baseline)
+        )
+        def set_solvent_price(price):
+            self.solvent.price = price
+        
+        @gen_param
+        @parameter(
+            baseline=0.001 * 100,
+            element='solvent',
+            units='%',
+            distribution=shape.Uniform(0.0001 * 100, 0.002 * 100)
+        )
+        def set_solvent_loss(solvent_loss):
+            self.solvent_loss.split[:] = solvent_loss / 100.
+        
+        @gen_param
+        @parameter(
+            element='dissolution', units='wt %',
+            distribution=shape.Uniform(1, 5),
+            baseline=self.dissolution_step.capacity * 100,
+        )
+        def set_dissolution_capacity(solvent_capacity):
+            self.dissolution_step.capacity = solvent_capacity / 100
+        
+        chemicals = bst.settings.chemicals
+        solvent = chemicals[self.dissolution_step.solvent]
+        T = self.dissolution_step.T
+        Tmax = solvent.Tb - 5
+        Tmin = max(solvent.Tm + 5, 265)
+        if T > Tmax: T = Tmax - 1
+        @parameter(
+            element='dissolution', units='K',
+            distribution=shape.Triangle(Tmin, T, Tmax),
+            baseline=T,
+        )
+        def set_dissolution_temperature(temperature):
+            self.dissolution_step.T = temperature
+        
+        if scenario.precipitation_temperature_format == 'drop':
+            @gen_param
+            @parameter(
+                element='precipitation', units='%',
+                distribution=shape.Uniform(50, 100),
+            )
+            def set_precipitation_temperature_drop(temperature_drop):
+                T = self.dissolution_step.T
+                self.precipitation_step.T = (
+                    T - temperature_drop / 100 * (T - Tmin)
+                )
+        elif scenario.precipitation_temperature_format == 'constant':
+            T_precipitation = self.precipitation_step.T
+            @gen_param
+            @parameter(
+                element='precipitation', units='K',
+                baseline=T_precipitation,
+                distribution=shape.Uniform(T_precipitation - 5, T_precipitation + 5),
+            )
+            def set_precipitation_temperature(temperature):
+                self.precipitation_step.T = temperature
+            
+            self.load_model(model)
+            for i in ('emissions', 'natural_gas', 'makeup_water', 'cooling_tower_makeup_water'):
+                if not hasattr(self, i): setattr(self, i, bst.Stream(i))
+            if facilities:
+                self.natural_gas.set_CF(
+                    GWP_key,
+                    0.33, # Natural gas from shell conventional recovery, GREET; includes non-biogenic emissions
+                )
+                self.natural_gas.set_CF(
+                    'FFC',
+                    51, # [MJ / kg NG] From Open-LCA Environmental Footprint 2.0
+                )
+                
+            #CF for xylenes
+            self.solvent.set_CF(GWP_key,0.8199)
+            self.solvent.set_CF('FFC',54)
+            
+            #self.products[:] = [self.HDPE_resins, self.NdFeB_Magnets]
+            
+            return bst.Model(self.system)
+
+
+
+    
