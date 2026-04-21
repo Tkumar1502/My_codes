@@ -37,9 +37,9 @@ JacketedSurgeTank = bst.StorageTank  # TODO: Add cost of jacket
 # TODO: Find cost for microfilter, the following only works for nanofilter.
 # Membrane separation processes. Perry's Chemical Engineer's Handbook 7th Edition.
 
-CEPCI2022 = 816.0  # 2022
+CEPCI2022 = 836.9  # 2025
 Europe_investment_site_factor = 1.2
-euro_to_dollar = 1.04
+euro_to_dollar = 1.17
 installation_cost = 115000  # euro
 volume_treated = 10 * 24 * 30 * 18  # m3
 membrane_area = 27.5  # m2

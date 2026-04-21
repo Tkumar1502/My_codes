@@ -98,15 +98,14 @@ units.append(HS)            #have to make sure you append any new unit to see th
 
 #changing the names for the streams?
 HS.outs[0].ID = 'Impellers'         #changing the sorted feed of interest to impellers
-process.M2.outs[0].ID = 'NdFeB Magnets'
+#process.M2.outs[0].ID = 'NdFeB Magnets'
 process.U9.outs[0].ID = 'HDPE resins'
 
 #creating a storage tankf for magnets
 S_mag = bst.Splitter(split=1)
-S_mag.isplit['BulkPlastic'] = 1 - 0.14
+S_mag.isplit['BulkPlastic'] =  1-0.86
 S_mag.ins[0] = process.T4.outs[0]
 S_mag.outs[0] = process.P3.ins[0]
-
 
 units.append(S_mag)
 
