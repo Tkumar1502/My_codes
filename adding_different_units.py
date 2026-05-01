@@ -103,7 +103,7 @@ process.U9.outs[0].ID = 'HDPE resins'
 
 #creating a storage tankf for magnets
 S_mag = bst.Splitter(split=1)
-S_mag.isplit['BulkPlastic'] =  1-0.86
+S_mag.isplit['BulkPlastic'] =  0
 S_mag.ins[0] = process.T4.outs[0]
 S_mag.outs[0] = process.P3.ins[0]
 
