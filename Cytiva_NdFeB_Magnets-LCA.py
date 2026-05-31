@@ -30,21 +30,48 @@ if hasattr(strap.MagnetRecovery, 'cache'):
     strap.MagnetRecovery.cache.clear()
 
 bst.settings.CEPCI = 836.9
-
 process = strap.MagnetRecovery(
     processing_capacity = 325,      #tons
     sell_leftover_plastic = True,
-    simulate=True)
+    simulate=False)
 
 process.tea.labor_cost = 580000 + process.HS.total_salary
-process.S2.outs[1].ID = 'NdFeB Magnets'
-process.s22.ID = 'Impurities'
+
+process.S2.outs[1].disconnect_sink()
+
+#reroute the solvent pipes into T2 before destroying M2
+saved_solvent_streams = [
+    stream for stream in process.M2.ins
+    if stream and stream is not process.S2.outs[1]
+    ]
+process.T2.ins[:] = saved_solvent_streams
+
+process.M2.disconnect()
+
+process.solvent.ID = 'Xylenes'
+
+active_units = [unit for unit in process.system.units if unit.ID != 'M2']
+process.system  = bst.System(ID = 'sys', path =active_units, facilities = process.system.facilities)
+
+process.S2.outs[1].ID='NdFeB_Magnets'
+process.s22.ID='Impurities'
+
+process.NdFeB_Magnets = process.S2.outs[1]
+process.HDPE_resins = process.U9.outs[0]
+
 
 products = [process.NdFeB_Magnets, process.HDPE_resins]
 process.products[:] = [process.HDPE_resins, process.NdFeB_Magnets]
 
 process.HDPE_resins.price = 1.20
 process.NdFeB_Magnets.price = 100
+
+#add processing parameters again if flow rates (input) starts funky
+process.tea.operating_days = 328.5
+process.set_processing_capacity(325)    #somehow changing the order changes the input flow rate, add your processing capacity after declaring tea hours/days
+
+process.system.update_configuration()
+process.system.simulate()
 
 process.system.diagram()
 
@@ -124,4 +151,10 @@ process.adsorption_column.ins[2].set_CF(POCP,0.00619 + .00207 )
 
 
 #%%
-inventory_table = bst.report.lca_inventory_table(systems =[process.system],keys=GWP, items=[process.products])
+process.system.operating_hours = process.tea.operating_hours
+
+'''for feed in process.system.feeds:
+    if feed.characterization_factors.get('GWP') is None:
+        feed.characterization_factors['GWP'] = 0.0
+'''
+inventory_table = bst.report.lca_inventory_table(systems =[process.system],keys=GWP, items=process.products)

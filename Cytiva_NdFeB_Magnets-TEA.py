@@ -33,7 +33,7 @@ if hasattr(strap.MagnetRecovery, 'cache'):
 process = strap.MagnetRecovery(
     processing_capacity = 325,      #tons
     sell_leftover_plastic = True,
-    simulate=True)
+    simulate=False)
 
 process.tea.labor_cost = 580000 + process.HS.total_salary
 process.S2.outs[1].ID = 'NdFeB Magnets'
@@ -44,6 +44,11 @@ process.products[:] = [process.HDPE_resins, process.NdFeB_Magnets]
 
 process.HDPE_resins.price = 1.20
 process.NdFeB_Magnets.price = 100
+
+#update the processing conditions if model starts behaving funky
+process.tea.operating_days = 328.5
+process.set_processing_capacity(325)
+process.system.simulate()
 
 process.system.diagram()
 
