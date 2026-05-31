@@ -3359,7 +3359,7 @@ class MagnetRecovery(bst.ProcessModel):
             
             #self.products[:] = [self.HDPE_resins, self.NdFeB_Magnets]
             
-            return bst.Model(self.system)
+        return model
 
 
 

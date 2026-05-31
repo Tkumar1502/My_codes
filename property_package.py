@@ -18,7 +18,6 @@ STRAP_chemicals_outline = bst.ChemicalsOutline([
     "Toluene", 
     "DMSO", 
     bst.ChemicalDraft("THF", search_ID='109-99-9'),
-    bst.ChemicalDraft("DMF", search_ID='68-12-2'),
     bst.ChemicalDraft(
         'PE', 
         aliases=set(['Polyethylene']), 
@@ -34,22 +33,6 @@ STRAP_chemicals_outline = bst.ChemicalsOutline([
     bst.ChemicalDraft(
         'PEoligomer', 
         search_ID='1-Hexene',
-    ),
-    bst.ChemicalDraft( ##change these values to match later
-        'PVDF', 
-        aliases=set(['PVDF']), 
-        formula='C2H2F2',
-        search_db=False,
-        phase='s',
-        rho=0.5 * (880 + 960), # kg / m3
-        Cp=0.5 * (1.330 + 2.400), # J / g
-        Tm=0.5 * (115 + 135) + 273.15, # K
-        LHV=261.0 * MW('C2H4'), # https://nvlpubs.nist.gov/nistpubs/jres/78A/jresv78An5p611_A1b.pdf
-        default=True,
-    ),
-    bst.ChemicalDraft(
-        'PVDFoligomer', 
-        search_ID='75-38-7',
     ),
     bst.ChemicalDraft('ActivatedCarbon', search_db=False, rho=1540, phase='s', default=True, MW=1),
     bst.ChemicalDraft(
@@ -92,6 +75,43 @@ STRAP_chemicals_outline = bst.ChemicalsOutline([
         default=True,
         LHV= 21285 * 192.16812,
     ),
+    
+#NdFeB magnets
+     bst.ChemicalDraft(
+        "NdFeB",
+        aliases  = set(['Neodymium Magnet']),
+        search_db = False,
+        phase = 's',
+        rho = 0.5*(7300+7700),
+        Tm = 273 + 1024,
+        Cp = 0.5*(0.12+0.15),
+        default = True,
+        
+        
+        ),
+ 
+ 
+#HDPE
+     bst.ChemicalDraft(
+         'HDPE', 
+         aliases=set(['High Density Polyethylene']), 
+         formula='C2H4',
+         search_db=False,
+         phase='s',
+         rho=0.5 * (930 + 970), # kg / m3
+         Cp=0.5 * (1.330 + 2.400), # J / g
+         Tm=0.5 * (120 + 135) + 273.15, # K
+         LHV=261.0 * MW('C2H4'), # https://nvlpubs.nist.gov/nistpubs/jres/78A/jresv78An5p611_A1b.pdf
+         default=True,
+     ),
+
+
+    bst.ChemicalDraft(
+    'HDPEoligomer', 
+    search_ID='1-Hexene',
+    CAS = 'HDPEoligomer',
+    ),
+    
     bst.ChemicalDraft(
         'EVOH',
         aliases=set(['Ethylene vinyl alcohol']),
@@ -103,46 +123,10 @@ STRAP_chemicals_outline = bst.ChemicalsOutline([
         default=True,
         LHV= 21285 * MW('C2H4OC2H4'), # TODO: Adjust lower heating value and add reference.
     ),
-    
-    
-    bst.ChemicalDraft(
-        'NdFeB',
-        aliases=set(['NdFeB']),
-        formula='NdFeB',
-        search_db=False,
-        phase='s',
-        rho=0.5 * (7300 + 7700),
-        Tm = 273 + 1024,
-        Cp=0.5*(0.12 + 0.15),
-        default=True,
-    
-    ),
-    
-    bst.ChemicalDraft(
-        'HDPE',
-        aliases=set(['High density polyethylene']),
-        formula='C2H4',
-        search_db=False,
-        phase='s',
-        rho=0.5 * (930+970),
-        Cp=0.5*(1.33 + 2.4),
-        Tm = 0.5*(120+133) + 273,
-        default=True,
-        LHV= 261.0, # TODO: Adjust lower heating value and add reference.
-    ),
-    
-    bst.ChemicalDraft(
-        'HDPEoligomer', 
-        search_ID='1-hexene', # Approximate monomer
-        CAS='HDPEoligomer',
-    ),
-    
     bst.ChemicalDraft(
         'EVOHoligomer', 
         search_ID='3-buten-2-ol', # Approximate monomer
     ),
-    
-    
     "Water",
     bst.ChemicalDraft("N2", phase='g'), 
     bst.ChemicalDraft("O2", phase='g'), 
