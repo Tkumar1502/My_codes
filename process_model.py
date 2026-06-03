@@ -12,7 +12,8 @@ from .systems import (
 )
 from .tea import create_baseline_tea
 from .data import price_distributions_2023 as dist
-from .data.lca_characterization_factors import GWP_characterization_factors as CFs, set_GWPCF
+from .data.lca_characterization_factors import indicators, set_CFs as set_GWPCF
+CFs = indicators['GWP']
 from chaospy import distributions as shape
 from plastics import strap
 from biosteam.utils import CABBI_colors, GG_colors, colors
@@ -2981,7 +2982,7 @@ class MagnetRecovery(bst.ProcessModel):
         else:
             _, *products = system.outs
         
-        self.products = [self.HDPE_resins, self.NdFeB_Magnets]             # changed from products
+        self.products = products = [self.HDPE_resins, self.NdFeB_Magnets]             # changed from products
         model = bst.Model(system)
         parameter = model.parameter
         metric = model.metric

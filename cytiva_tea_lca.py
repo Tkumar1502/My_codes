@@ -31,6 +31,27 @@ from matplotlib.colors import TwoSlopeNorm, Normalize
 from matplotlib.ticker import PercentFormatter, FuncFormatter
 filterwarnings('ignore')
 
+# Added for inline SVG display in interactive environments
+try:
+    from IPython.display import SVG, display
+except ImportError:
+    # IPython not available; define dummy functions
+    def display(obj):
+        print('Display not available in this environment.')
+    class SVG:
+        def __init__(self, filename=None):
+            self.filename = filename
+
+def show_svg(path):
+    """Display an SVG file inline if possible.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        Path to the SVG file.
+    """
+    display(SVG(filename=str(path)))
+
 #define scenario
 processing_capacity=325
 

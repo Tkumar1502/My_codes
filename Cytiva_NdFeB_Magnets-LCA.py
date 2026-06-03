@@ -40,11 +40,6 @@ process.tea.labor_cost = 580000 + process.HS.total_salary
 process.S2.outs[1].disconnect_sink()
 
 #reroute the solvent pipes into T2 before destroying M2
-saved_solvent_streams = [
-    stream for stream in process.M2.ins
-    if stream and stream is not process.S2.outs[1]
-    ]
-process.T2.ins[:] = saved_solvent_streams
 
 process.M2.disconnect()
 
@@ -74,6 +69,7 @@ process.system.update_configuration()
 process.system.simulate()
 
 process.system.diagram()
+
 
 #%%     LCA
 
@@ -158,3 +154,41 @@ process.system.operating_hours = process.tea.operating_hours
         feed.characterization_factors['GWP'] = 0.0
 '''
 inventory_table = bst.report.lca_inventory_table(systems =[process.system],keys=GWP, items=process.products)
+
+#LCA
+GWP = 'GWP'
+
+
+
+for i in process.parameters:
+    i.distribution = Uniform(*i.bounds)
+
+#get assumptions for print
+assumptions, results = process.baseline()
+
+assumptions_table = pd.DataFrame(assumptions)
+
+inventory_table = bst.report.lca_inventory_table([process.system], keys = GWP, items = [process.products])
+
+GWP_table = bst.report.lca_displacement_allocation_table(
+    [process.system],
+    'GWP',
+    products, 
+)
+
+revenue_allocation = bst.report.lca_property_allocation_factor_table(
+    [process.system],
+    property='revenue',
+)
+
+energy_allocation = bst.report.lca_property_allocation_factor_table(
+    [process.system],
+    property='energy',
+)
+
+gwp_allocation = bst.report.lca_displacement_allocation_factor_table(
+    [process.system],
+    items = process.products,
+    key =   GWP
+)
+

@@ -355,8 +355,8 @@ def create_single_layer_batch_separation_system(
         if solvent_loss < 0:
             recycle.F_mass *= solvent.imol[solvent_key] / solvent_recycled
             solvent_loss = 0
-        storage.ins[0].imol[solvent_key] = solvent_loss
-        mixer.run_until(dissolution, inclusive=True)
+        storage.ins[0].imol[solvent_key] = solvent_out * splitter.isplit[solvent_key]
+        storage.run_until(dissolution, inclusive=True)
         mixed = solvent + feed
         H_actual = mixed.H
         mixed.T = dissolution_step.T
@@ -364,6 +364,7 @@ def create_single_layer_batch_separation_system(
         solvent.H += H_target - H_actual
         hx.T = solvent.T
         mixer.run_until(dissolution, inclusive=True)
+        print('MAKING SURE')
     
     effluent, = dissolution.outs
     surge_tank = JacketedSurgeTank(
