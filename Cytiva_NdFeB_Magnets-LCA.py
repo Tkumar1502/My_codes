@@ -39,7 +39,6 @@ process.tea.labor_cost = 580000 + process.HS.total_salary
 
 process.S2.outs[1].disconnect_sink()
 
-#reroute the solvent pipes into T2 before destroying M2
 
 process.M2.disconnect()
 
