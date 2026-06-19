@@ -35,10 +35,12 @@ process = strap.MagnetRecovery(
     sell_leftover_plastic = True,
     simulate=False)
 
+process.dissolution_step.T = 383.15
+
 process.tea.labor_cost = 580000 + process.HS.total_salary
 
-process.S2.outs[1].disconnect_sink()
-
+process.Vac_S.outs[0].ID = 'NdFeB_Magnets'
+process.Vac_S.outs[1].ID = 'Xylenes vapors'
 
 process.M2.disconnect()
 
@@ -47,10 +49,10 @@ process.solvent.ID = 'Xylenes'
 active_units = [unit for unit in process.system.units if unit.ID != 'M2']
 process.system  = bst.System(ID = 'sys', path =active_units, facilities = process.system.facilities)
 
-process.S2.outs[1].ID='NdFeB_Magnets'
+#process.S2.outs[1].ID='NdFeB_Magnets'
 process.s22.ID='Impurities'
 
-process.NdFeB_Magnets = process.S2.outs[1]
+process.NdFeB_Magnets = process.Vac_S.outs[0]
 process.HDPE_resins = process.U9.outs[0]
 
 
@@ -65,6 +67,9 @@ process.tea.operating_days = 328.5
 process.set_processing_capacity(325)    #somehow changing the order changes the input flow rate, add your processing capacity after declaring tea hours/days
 
 process.system.update_configuration()
+
+
+
 process.system.simulate()
 
 process.system.diagram()

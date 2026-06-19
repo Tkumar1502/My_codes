@@ -12,8 +12,7 @@ from .systems import (
 )
 from .tea import create_baseline_tea
 from .data import price_distributions_2023 as dist
-from .data.lca_characterization_factors import indicators, set_CFs as set_GWPCF
-CFs = indicators['GWP']
+from .data.lca_characterization_factors import GWP_characterization_factors as CFs, set_GWPCF
 from chaospy import distributions as shape
 from plastics import strap
 from biosteam.utils import CABBI_colors, GG_colors, colors
@@ -161,7 +160,7 @@ def define_precipitation(
         solubility: float=0,
         precipitate_solvent_content: float=0.8,
         screw_press_solvent_content: float=0.4,
-        T: float=308.15,
+        T: float=308.15,            
         tau: float=0.5,
         T_condensation: float=None, # Not actually used in new configuration
         override: bool=True,
@@ -2683,8 +2682,109 @@ class STRAPProcessPE(bst.ProcessModel):
         cls.cache[key] = self
         return self
                         
+#defining a vacuum storage unit class
+
+
+class VacuumStorageDryer(bst.Unit):
+    """
+    A custom quick-flash vacuum storage and drying unit.
+    Dries wet metal solids by pulling a deep vacuum to instantly 
+    evaporate volatile solvents down to a near-zero target dryness fraction.
+
+    Parameters
+    ----------
+    ins : 
+        * [0] Wet solids (e.g., metal magnets carrying hot solvent).
+    outs : 
+        * [0] Dried solids.
+        * [1] Flashed solvent vapor.
+    split : dict[str, float]
+        Componentwise splits mapping which components flash completely to the vapor stream [1].
+    T : float, optional
+        Operating temperature [K]. Defaults to 395.15 K (~122°C) for accelerated evaporation.
+    P : float, optional
+        Operating vacuum pressure [Pa]. Defaults to 101325 * 0.05 (~5066 Pa, 5% of atmosphere).
+    moisture_content : float, optional
+        Target residual solvent weight fraction remaining in the solids [wt / wt]. Defaults to 1e-5.
+    moisture_ID : str, optional
+        The Chemical ID of the target solvent being evaporated (e.g., 'Xylenes').
+    residence_time : float, optional
+        Vessel storage/holdup time in hours. Defaults to 0.25 hours (exactly 15 minutes).
+    """
     
-  
+    # Instructs BioSTEAM to treat the vacuum pump system as an internal sub-unit.
+    # This automatically tracks and includes its electrical utility draw (kW) in the process tables.
+    auxiliary_unit_names = ()
+    
+    _N_ins = 1
+    _N_outs = 2
+
+    @property
+    def isplit(self):
+        """[ChemicalIndexer] Componentwise split of feed to the gas outlet stream [1]."""
+        return self._isplit
+
+    @property
+    def split(self):
+        """[Array] Componentwise split of feed to the gas outlet stream [1]."""
+        return self._isplit.data
+
+    def _init(self, split, T=395.15, P=101325 * 0.05, 
+              moisture_content=1e-5, moisture_ID='Xylenes', residence_time=0.25):
+        self._isplit = self.chemicals.isplit(split)
+        self.P = P
+        self.T = T
+        self.moisture_content = moisture_content
+        self.moisture_ID = moisture_ID
+        self.residence_time = residence_time
+
+    def _run(self):
+        wet_solids, = self.ins
+        dry_solids, solvent_vapor = self.outs
+        
+        # 1. Split incoming stream based on baseline volatile/non-volatile dictionary rules
+        wet_solids.split_to(solvent_vapor, dry_solids, self.split)
+        
+        # 2. Enforce target moisture/solvent content directly via mass-balance adjustments
+        # Calculate how much solvent is allowed to remain based on the final dry metal mass
+        solvent_remaining = (self.moisture_content * dry_solids.F_mass) / (1.0 - self.moisture_content)
+        
+        # Balance out the difference between the streams
+        total_solvent = dry_solids.imass[self.moisture_ID] + solvent_vapor.imass[self.moisture_ID]
+        
+        # Redistribute the solvent mass safely to meet your target
+        dry_solids.imass[self.moisture_ID] = min(total_solvent, solvent_remaining)
+        solvent_vapor.imass[self.moisture_ID] = max(0.0, total_solvent - dry_solids.imass[self.moisture_ID])
+        
+        # 3. Impose properties (Solvent flashes instantly to a gas under high heat and deep vacuum)
+        solvent_vapor.P = dry_solids.P = self.P
+        solvent_vapor.phase = 'g'  
+        dry_solids.phase = 's'
+        dry_solids.T = solvent_vapor.T = self.T
+
+    def _design(self):
+        # Calculate required vessel volumetric capacity based on throughput and 15-minute holdup window
+        volumetric_flow = self.ins[0].F_vol  # m3 / hr
+        vessel_volume = volumetric_flow * self.residence_time
+        self.design_results['Vessel Volume'] = vessel_volume
+        
+        # Instantiate BioSTEAM's vacuum generator engine.
+        # It handles ambient air leakage calculations and dynamically sizes the liquid-ring mechanical pump.
+        self.vacuum_system = bst.VacuumSystem(
+            unit=self,
+            P_suction=self.P,
+            vessel_volume=vessel_volume,
+            vacuum_system_preference='Liquid-ring pump'
+        )
+
+    def _cost(self):
+        # Clear database lookups to apply clean, user-defined purchase parameters
+        
+        self.baseline_purchase_costs.clear()
+        
+        # Sized smaller for a 15-minute pass-through, we apply an adjusted baseline value
+        self.baseline_purchase_costs['Combined Vacuum system'] = 35000.0
+        self.F_BM['Combined Vacuum system'] = 3.0  # Bare module material/installation factor
     
   
 # Neodymium Magnet Recovery
@@ -2709,6 +2809,8 @@ class MagnetHandSorting(bst.Unit):
             "Value":[self.N_workers, self.N_shifts, 1.6, self.total_salary]
             }
         return pd.DataFrame(results)
+
+
 
 
 
@@ -2851,13 +2953,64 @@ class MagnetRecovery(bst.ProcessModel):
         self.S_mag = bst.Splitter(split=1)
         self.S_mag.isplit['NdFeB'] =  0
         
+        self.S_mag.isplit['HDPE'] = 1
+        
+        #to make sure magnets coming out are wet
+        def strict_solvent_split():
+            feed = self.S_mag.ins[0]
+            magnets = feed.imass['NdFeB']
+            xylene_available = max(1e-6, feed.imass['Xylene'])
+            
+            # Math: Solve for exact Xylene mass required to make stream [1] 1.5% Xylene
+            xylene_needed_on_magnets = (0.015 * magnets) / 0.985
+            xylene_to_out1_fraction = xylene_needed_on_magnets / xylene_available
+            
+            # Constrain fraction between 0.0 and 1.0 and set the isplit array
+            xylene_to_out1_fraction = max(0.0, min(1.0, xylene_to_out1_fraction))
+            self.S_mag.isplit['Xylene'] = 1.0 - xylene_to_out1_fraction
+            
+            # Manually trigger mass balance execution
+            self.S_mag._run()
+        self.S_mag.add_specification(strict_solvent_split)
+        
         self.S_mag.ins[0] = u.T4.outs[0]
         self.S_mag.outs[0] = u.P3.ins[0]
         
         u.P3.outs[0] = u.U6.ins[0]
         
+        
+        vacuum_flash_split = {
+            'Xylene': 1.0,         # Volatilize all xylene wetness to the vapor outlet
+            'NdFeB': 0.0,          # Metal magnets stay locked in the solid phase outlet
+            'HDPE': 0.0
+        }
+
+        # Catching stream [1] directly from S_mag
+        self.Vac_S = VacuumStorageDryer(
+            ID='VacS',
+            split=vacuum_flash_split,
+            T=395.15,                            # ~122 °C hot operation
+            P=101325 * 0.05,                     # Deep vacuum (5% of standard atmosphere)
+            moisture_content=1e-5,               # Targets complete drying
+            moisture_ID='Xylene',
+            residence_time=0.25                  # Holds material for exactly 15 minutes
+        )
+        
+        self.Vac_S.ins[0] = self.S_mag.outs[1]
+        system.update_configuration()
+        system.units.append(self.Vac_S)
+        
+        self.Condenser = bst.HXutility(
+            ID = 'Condenser',
+            ins = self.Vac_S.outs[1],
+            outs = 'l-Xylenes',
+            V=0.0,
+            T=300.15
+            )
+        
         #making it neat and clean, removing empty stream from M3 mixer
         u.M3.ins[:] = [u.M3.ins[i] for i in (0,2,3)]
+        u.M3.ins.append(self.Condenser.outs[0])
         
         system.outs[:] = [s for s in system.outs if 'M2' not in s.ID]
         
@@ -2867,11 +3020,12 @@ class MagnetRecovery(bst.ProcessModel):
         system.units.remove(u.M2)
         system.units.append(self.HS)
         system.units.append(self.S_mag)
-        
+        system.units.append(self.Vac_S)
+        system.units.append(self.Condenser)
         system.update_configuration()
         
         
-        self.tea = create_baseline_tea(system)
+        self.tea = create_baseline_tea(system, years = 20)          #can change TEA parameters here
         
         self.direct_nonbiogenic_emissions = lambda: self.emissions.imass['CO2'] * system.operating_hours
         system.define_process_impact(
@@ -2958,7 +3112,7 @@ class MagnetRecovery(bst.ProcessModel):
         
         
         self.NdFeB_Magnets = self.S_mag.outs[1]
-        self.NdFeB_Magnets.ID = 'neodymium magnets'
+        self.NdFeB_Magnets.ID = ' wet neodymium magnets'
         
         #self.__dict__['products'] = [self.HDPE_resins,self.NdFeB_Magnets]
         
@@ -2982,7 +3136,7 @@ class MagnetRecovery(bst.ProcessModel):
         else:
             _, *products = system.outs
         
-        self.products = products = [self.HDPE_resins, self.NdFeB_Magnets]             # changed from products
+        self.products = [self.HDPE_resins, self.NdFeB_Magnets]             # changed from products
         model = bst.Model(system)
         parameter = model.parameter
         metric = model.metric
@@ -3022,9 +3176,12 @@ class MagnetRecovery(bst.ProcessModel):
                 GWP_total = GWP_material + GWP_emissions - GWP_electricity_production # kg CO2 eq. / y
                 return GWP_total / (self.HDPE_resin.F_mass * self.tea.operating_hours)
             else:
+                #FIX: filter out any unconnected/missing streams dynamically
+                valid_products = [s for s in products if hasattr (s, 'isfeed')]
+                
                 GWP = system.get_property_allocated_impact(
                     key=GWP_key, name='mass', basis='kg',
-                    products=products
+                    products=valid_products
                 ) # kg-CO2e / kg
                 if GWP < 0: breakpoint()
             return GWP

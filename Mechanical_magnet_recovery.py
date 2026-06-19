@@ -85,8 +85,8 @@ class Lathe_Machine (bst.Unit):
     _N_outs = 2
     
     
-    def __init__(self, ID='', ins=None, outs=(), thermo=None, power_kw=5.5, 
-                 purchase_cost=15000, BM =1.39,N_workers=1,N_shifts=2) :
+    def __init__(self, ID='', ins=None, outs=(), thermo=None, power_kw=7.5, 
+                 purchase_cost=15000, BM =2.0,N_workers=1,N_shifts=2) :
         super().__init__(ID, ins, outs, thermo)
         self.power_kw = power_kw          # kW rating of the industrial lathe
         self.custom_purchase_cost = purchase_cost # Capital cost ($) for TEA
@@ -126,7 +126,7 @@ class Arbor_Press(bst.Unit):
     _N_ins = 1
     _N_outs = 2
     def __init__(self, ID='', ins=None, outs=(), thermo=None, power_kw=0, purchase_cost=7000,
-                 BM = 1.39,N_workers=1,N_shifts=2):
+                 BM = 1.5,N_workers=1,N_shifts=2):
         super().__init__(ID, ins, outs, thermo)
         self.power_kw = power_kw
         self.custom_purchase_cost = purchase_cost
@@ -301,6 +301,10 @@ HDPE_shavings = U3.outs[1]
 NdFeB_magnets.price = 100
 HDPE_casing.price= -0.072
 HDPE_shavings.price = -0.072
+
+#feed stock handling and transportation
+feed.price = 0.25
+
 
 process.simulate()
 process.diagram()

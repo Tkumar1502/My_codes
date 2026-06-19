@@ -29,15 +29,37 @@ bst.main_flowsheet.clear()
 if hasattr(strap.MagnetRecovery, 'cache'):
     strap.MagnetRecovery.cache.clear()
 
-
+bst.settings.CEPCI =836.9
 process = strap.MagnetRecovery(
     processing_capacity = 325,      #tons
     sell_leftover_plastic = True,
     simulate=False)
 
-process.tea.labor_cost = 580000 + process.HS.total_salary
-process.S2.outs[1].ID = 'NdFeB Magnets'
-process.s22.ID = 'Impurities'
+#for STRAP plant
+N_operators = 1
+N_plant_manager = 1
+
+plant_manager_salary = 80000
+operator_salary = 60000
+
+process.tea.labor_cost = ((N_plant_manager*plant_manager_salary + N_operators*operator_salary)*1.6*3 +
+                          process.HS.total_salary)
+
+process.Vac_S.outs[0].ID = 'NdFeB_Magnets'
+process.Vac_S.outs[1].ID = 'Xylenes vapors'
+
+process.M2.disconnect()
+
+process.solvent.ID = 'Xylenes'
+
+active_units = [unit for unit in process.system.units if unit.ID != 'M2']
+process.system  = bst.System(ID = 'sys', path =active_units, facilities = process.system.facilities)
+
+#process.S2.outs[1].ID='NdFeB_Magnets'
+process.s22.ID='Impurities'
+
+process.NdFeB_Magnets = process.Vac_S.outs[0]
+process.HDPE_resins = process.U9.outs[0]
 
 products = [process.NdFeB_Magnets, process.HDPE_resins]
 process.products[:] = [process.HDPE_resins, process.NdFeB_Magnets]
@@ -50,10 +72,139 @@ process.tea.operating_days = 328.5
 process.set_processing_capacity(325)
 process.system.simulate()
 
+#adding a vacuum storage unit
+
 process.system.diagram()
 
 #TeA parameters
 #process.set_IRR(0.15)
+
+#%% updating units with price based on smallest size price as in MTU
+def custom_u3_cost():
+    process.U3.baseline_purchase_costs.clear()
+    
+    process.U3.baseline_purchase_costs['Vertical pressure vessel'] = 32352.9  #29437.0
+    process.U3.baseline_purchase_costs['Platform and ladders'] = 0  #3574.0
+    process.U3.baseline_purchase_costs['Agitator - Agitator'] = 0   #3903.21
+    #process.U3.baseline_purchase_costs['Jacketed Vessel'] = 55000.0
+    
+    
+    process.U3.power_utility.rate = 0.109
+    
+    process.U3.BM = 3.4
+process.U3._cost = custom_u3_cost
+
+def custom_t2_cost():
+    process.T2.baseline_purchase_costs.clear()
+    if hasattr(process.T2, 'baseline_item_bms'):
+        process.T2.baseline_item_bms.clear()
+        
+    # Define your final target purchase cost here
+    final_target = 15000.0  # Change this to whatever amount you want
+    
+    # Use a unique key to bypass BioSTEAM's default database lookup entirely
+    process.T2.baseline_purchase_costs['Tank'] = final_target
+    
+# Overwrite T2's costing routine
+process.T2._cost = custom_t2_cost
+
+def custom_p1_cost():
+    process.P1.baseline_purchase_costs.clear()
+    
+    process.P1.baseline_purchase_costs['Pump'] = 8000
+    
+    process.P1.power_utility.rate = 1.5e-5
+process.P1._cost = custom_p1_cost
+
+def custom_t4_cost():
+    process.T4.baseline_purchase_costs.clear()
+    if hasattr(process.T4, 'baseline_item_bms'):
+        process.T4.baseline_item_bms.clear()
+        
+    # Define your final target purchase cost here
+    final_target = 20000.0  # Change this to whatever amount you want
+    
+    # Use a unique key to bypass BioSTEAM's default database lookup entirely
+    process.T4.baseline_purchase_costs['Tank'] = final_target
+
+process.T4._cost = custom_t4_cost
+
+def custom_p3_cost():
+    process.P3.baseline_purchase_costs.clear()
+    process.P3.baseline_purchase_costs['Pump'] = 0.0
+
+def custom_u6_cost():
+    process.U6.baseline_purchase_costs.clear()
+    process.U6.baseline_purchase_costs['combined U6 and P3'] = 250000
+    process.U6.power_utility.rate = 0.0211
+    process.U6.F_BM['combined U6 and P3'] = 3.0
+    
+process.P3._cost = custom_p3_cost
+process.U6._cost = custom_u6_cost
+
+def custom_h3_cost():
+    process.H3.baseline_purchase_costs.clear()
+    process.H3.baseline_purchase_costs['Double pipe'] = 125000/1.768
+process.H3._cost = custom_h3_cost
+
+def custom_h2_cost():
+    process.H2.baseline_purchase_costs.clear()
+    if hasattr(process.H2, 'baseline_item_bms'):
+        process.H2.baseline_item_bms.clear()
+    
+    process.H2.baseline_purchase_costs['Chiller'] = 50000
+    process.H2.F_BM['Chiller'] = 2.5
+process.H2._cost = custom_h2_cost
+
+def custom_h1_cost():
+    process.H1.baseline_purchase_costs.clear()
+    process.H1.baseline_purchase_costs['Double pipe'] = 8000*1.776
+    #process.H1.F_BM['Double pipe'] = 2.42
+process.H1._cost = custom_h1_cost
+
+#changing cost of CWP and Cooling Tower to 0, as we included it in H2 (chiller)
+def custom_CWP_cost():
+    process.CWP.baseline_purchase_costs.clear()
+    process.CWP.baseline_purchase_costs['Chilled water package'] = 0
+    
+process.CWP._cost = custom_CWP_cost
+
+def custom_p2_cost():
+    process.P2.baseline_purchase_costs.clear()
+    process.P2.baseline_purchase_costs['Pump system'] = 8000
+    process.P2.F_BM['Pump system'] = 3.3    
+process.P2._cost = custom_p2_cost
+
+def custom_t3_cost():
+    process.T3.baseline_purchase_costs.clear()
+    process.T3.baseline_purchase_costs['Tank system'] = 15000
+    process.T3.F_BM['Tank system'] = 2.3
+process.T3._cost=custom_t3_cost
+
+def custom_U9_cost():
+    process.U9.baseline_purchase_costs.clear()
+    if hasattr(process.U9, 'baseline_item_bms'):
+        process.U9.baseline_item_bms.clear()
+    process.U9.baseline_purchase_costs['Screw degasser'] = 250000
+    
+    process.U9.power_utility.rate = 4.74
+    process.U9.F_BM['Screw degasser'] = 2.6
+process.U9._cost = custom_U9_cost
+
+def custom_u7_cost():
+    process.U7.baseline_purchase_costs.clear()
+    if hasattr(process.U7, 'baseline_item_bms'):
+        process.U7.baseline_item_bms.clear()
+    process.U7.baseline_purchase_costs['Precipitator'] = 175000
+    process.U7.F_BM['Precipitator']=3.46
+process.U7._cost = custom_u7_cost
+
+def custom_u8_cost():
+    process.U8.baseline_purchase_costs.clear()
+    process.U8.baseline_purchase_costs['Precipitator'] = 0
+    process.U8.power_utility.rate = 1.05
+process.U8._cost = custom_u8_cost
+process.system.simulate()
 
 
 
