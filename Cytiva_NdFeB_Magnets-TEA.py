@@ -10,6 +10,8 @@ import importlib
 
 bst.settings.ID_magic = False
 from plastics import strap
+importlib.reload(strap.property_package)
+importlib.reload(strap.process_model)
 from chaospy.distributions import Uniform
 import pandas as pd
 from warnings import filterwarnings
@@ -20,7 +22,7 @@ from datetime import datetime
 from matplotlib.ticker import PercentFormatter, FuncFormatter
 from matplotlib.colors import TwoSlopeNorm, Normalize
 
-importlib.reload(strap.process_model)
+
 
 filterwarnings('ignore')
 
@@ -29,9 +31,11 @@ bst.main_flowsheet.clear()
 if hasattr(strap.MagnetRecovery, 'cache'):
     strap.MagnetRecovery.cache.clear()
 
+capacity = 1976
+
 bst.settings.CEPCI =836.9
 process = strap.MagnetRecovery(
-    processing_capacity = 325,      #tons
+    processing_capacity = capacity,      #tons
     sell_leftover_plastic = True,
     simulate=False)
 
@@ -42,9 +46,35 @@ N_plant_manager = 1
 plant_manager_salary = 80000
 operator_salary = 60000
 
-process.tea.labor_cost = ((N_plant_manager*plant_manager_salary + N_operators*operator_salary)*1.6*3 +
-                          process.HS.total_salary)
 
+feed_composition = {'NdFeB': 0.1548,
+        'HDPE': 0.0252,
+        'Films': 0.10,
+        'FittingsFilters': 0.36,
+        'BrownSupport': 0.07,
+        'SiliconeTubings': 0.29
+        }
+
+
+#update the processing conditions if model starts behaving funky
+process.tea.operating_days = 309
+operating_hours = 309*16 #16hours/day for 2 shifts
+
+#adjusting the total number of days for 2 shifts/day
+#adjusted_days = operating_hours/24
+process.tea.operating_hours = operating_hours
+feed_per_hour = capacity*1000/process.tea.operating_hours
+
+process.feedstock.empty()
+for chem, frac in feed_composition.items():
+    process.feedstock.imass[chem]=feed_per_hour*frac
+
+
+strap_labor = N_plant_manager*plant_manager_salary + N_operators*operator_salary*1.6*3
+
+process.tea.labor_cost = strap_labor + process.U11.total_salary
+
+process.plastic.ID =  'Bioreactor bags'
 process.Vac_S.outs[0].ID = 'NdFeB_Magnets'
 process.Vac_S.outs[1].ID = 'Xylenes vapors'
 
@@ -64,26 +94,44 @@ process.HDPE_resins = process.U9.outs[0]
 products = [process.NdFeB_Magnets, process.HDPE_resins]
 process.products[:] = [process.HDPE_resins, process.NdFeB_Magnets]
 
+#products
 process.HDPE_resins.price = 1.20
 process.NdFeB_Magnets.price = 100
 
-#update the processing conditions if model starts behaving funky
-process.tea.operating_days = 328.5
-process.set_processing_capacity(325)
+#wastes generated
+wastewater = process.S3.outs[1]
+othercomponents = process.S3.outs[0]
+ 
+wastewater.price = -0.002642
+othercomponents.price = -0.072
+
+#raw_materials
+bioreactor = process.feedstock
+freshwater = process.U10.ins[1]
+peracetic_acid = process.U10.ins[2]
+
+#setting up raw material price
+bioreactor.price = 0.25
+freshwater.price = 0.002
+peracetic_acid.price = 2.50
+
+#process.set_processing_capacity(325)
 process.system.simulate()
 
 #adding a vacuum storage unit
 
 process.system.diagram()
 
-#TeA parameters
+#TEA parameters
 #process.set_IRR(0.15)
+
+
 
 #%% updating units with price based on smallest size price as in MTU
 def custom_u3_cost():
     process.U3.baseline_purchase_costs.clear()
     
-    process.U3.baseline_purchase_costs['Vertical pressure vessel'] = 32352.9  #29437.0
+    process.U3.baseline_purchase_costs['Vertical pressure vessel'] = 32352.9  #scaled to 55000
     process.U3.baseline_purchase_costs['Platform and ladders'] = 0  #3574.0
     process.U3.baseline_purchase_costs['Agitator - Agitator'] = 0   #3903.21
     #process.U3.baseline_purchase_costs['Jacketed Vessel'] = 55000.0
@@ -205,6 +253,10 @@ def custom_u8_cost():
     process.U8.power_utility.rate = 1.05
 process.U8._cost = custom_u8_cost
 process.system.simulate()
+
+
+
+
 
 
 

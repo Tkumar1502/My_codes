@@ -89,7 +89,28 @@ STRAP_chemicals_outline = bst.ChemicalsOutline([
         
         
         ),
- 
+     
+ #defined as peracetic acid    
+     bst.ChemicalDraft(
+         'AceticAcid',
+         aliases = set(['AceticAcid']),
+         search_db = False,
+         phase = 'l',
+         rho = 0.5*(1.11 + 1.22),
+         default = True,
+         formula = 'C2H4O3'
+         
+         
+         ),
+     bst.ChemicalDraft(
+         'Silcione',
+         aliases =set(['SiliconeTubings']),
+         search_db = False,
+         phase = 's',
+         rho =0.5*(1100+1300),
+         default = True,
+         
+         ),
  
 #HDPE
      bst.ChemicalDraft(
@@ -137,6 +158,13 @@ STRAP_chemicals_outline = bst.ChemicalsOutline([
     bst.ChemicalDraft("Ash", search_db=False, rho=1540, phase='s', default=True, MW=1),
     bst.ChemicalDraft("Minerals", search_db=False, rho=1540, phase='l', default=True, MW=1),
     bst.ChemicalDraft("Solubles", search_db=False, rho=1540, phase='l', default=True, MW=1),
+    
+    
+    #defining the feedstock components for bioreactor bags
+    bst.ChemicalDraft('Films', search_ID = 'Polyethylene',phase = 's'),
+    bst.ChemicalDraft('FittingsFilters', search_ID = 'Polypropylene', phase = 's'),
+    bst.ChemicalDraft('BrownSupport',search_ID = 'Polypropylene',phase='s'),
+    #bst.ChemicalDraft('SiliconeTubings',search_ID = 'Polypropylene',phase='s'),
 ])
 
 def create_property_package():
