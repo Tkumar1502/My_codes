@@ -20,7 +20,7 @@ from datetime import datetime
 from matplotlib.ticker import PercentFormatter, FuncFormatter
 from matplotlib.colors import TwoSlopeNorm, Normalize
 
-importlib.reload(strap.process_model)
+
 
 filterwarnings('ignore')
 
@@ -29,11 +29,54 @@ bst.main_flowsheet.clear()
 if hasattr(strap.MagnetRecovery, 'cache'):
     strap.MagnetRecovery.cache.clear()
 
+capacity = 1976
 bst.settings.CEPCI = 836.9
 process = strap.MagnetRecovery(
-    processing_capacity = 325,      #tons
+    processing_capacity = capacity,      #tons
     sell_leftover_plastic = True,
     simulate=False)
+
+
+feed_composition = {'NdFeB': 0.1548,
+        'HDPE': 0.0252,
+        'Films': 0.10,
+        'FittingsFilters': 0.36,
+        'BrownSupport': 0.07,
+        'SiliconeTubings': 0.29,
+        'Solutes': 0.001
+        }
+
+process.tea.operating_hours = 309*2*8       #days*shifts*hours
+feed_per_hour = capacity*1000/process.tea.operating_hours
+
+process.feedstock.empty()
+for chem, frac in feed_composition.items():
+    process.feedstock.imass[chem]=feed_per_hour*frac
+    
+    
+import types
+import plastics.strap.units as strap_units
+
+# 1. Grab the original design method from the class definition
+original_u7_design = strap_units.Precipitator._design
+
+# 2. Define the safe function accepting 'self'
+def safe_u7_design(self):
+    # Check if this specific unit's inlet is empty or has zero volumetric flow
+    if self.ins[0].isempty() or self.ins[0].F_vol <1e-6:
+        self.design_results['Vessel volume'] = 0.0
+        self.design_results['Number of reactors'] = 0
+    else:
+        try:
+            # Pass 'self' back to the original class method normally
+            original_u7_design(self)
+        except ZeroDivisionError:
+            self.design_results['Vessel volume'] = 0.0
+            self.design_results['Number of reactors'] = 0.0
+
+# 3. Bind the function to the specific process.U7 instance as a method
+process.U7._design = types.MethodType(safe_u7_design, process.U7)
+  
 
 process.dissolution_step.T = 383.15
 
@@ -63,8 +106,8 @@ process.HDPE_resins.price = 1.20
 process.NdFeB_Magnets.price = 100
 
 #add processing parameters again if flow rates (input) starts funky
-process.tea.operating_days = 328.5
-process.set_processing_capacity(325)    #somehow changing the order changes the input flow rate, add your processing capacity after declaring tea hours/days
+
+#process.set_processing_capacity(325)    #somehow changing the order changes the input flow rate, add your processing capacity after declaring tea hours/days
 
 process.system.update_configuration()
 
@@ -150,14 +193,26 @@ process.adsorption_column.ins[2].set_CF(OZD,2.833e-9 + 4.311e-14 )
 process.adsorption_column.ins[2].set_CF(POCP,0.00619 + .00207 )
 
 
+
+#%%CFs for peracetic acid
+process.system.feeds[2].ID = "peracetic_acid"
+process.system.feeds[2].set_CF(GWP, 0.0)
+
+
+#%%CFs for freshwater
+process.U10.ins[1].ID = 'fresh_water'
+process.U10.ins[1].set_CF(GWP,0.0)
+
+
 #%%
+process.tea.operating_hours = 309*8*2
 process.system.operating_hours = process.tea.operating_hours
 
 '''for feed in process.system.feeds:
     if feed.characterization_factors.get('GWP') is None:
         feed.characterization_factors['GWP'] = 0.0
 '''
-inventory_table = bst.report.lca_inventory_table(systems =[process.system],keys=GWP, items=process.products)
+inventory_table = bst.report.lca_inventory_table(systems =[process.system],keys=GWP, items=process.system.outs)
 
 #LCA
 GWP = 'GWP'
@@ -167,12 +222,9 @@ GWP = 'GWP'
 for i in process.parameters:
     i.distribution = Uniform(*i.bounds)
 
-#get assumptions for print
-assumptions, results = process.baseline()
 
-assumptions_table = pd.DataFrame(assumptions)
 
-inventory_table = bst.report.lca_inventory_table([process.system], keys = GWP, items = [process.products])
+#inventory_table = bst.report.lca_inventory_table([process.system], keys = GWP, items = [process.products])
 
 GWP_table = bst.report.lca_displacement_allocation_table(
     [process.system],

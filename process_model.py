@@ -1144,7 +1144,8 @@ class STRAPMSWProcess(bst.ProcessModel):
         # )
         # def set_IRR(IRR):
         #     self.tea.IRR = IRR
-        self.tea.IRR = 0.1 # Consistent with other waste reducing processes (NREL).
+        #self.tea.IRR = 0.1 # Consistent with other waste reducing processes (NREL).
+        self.tea.IRR = 0.15 #changed it to 15% from 10 (above line)
         
         baseline = scenario.target_plastic_percent / (100 - scenario.biogenic_material_percent)
         @parameter(
@@ -2692,10 +2693,13 @@ class Disinfection_Unit(bst.Unit):
    
    _units = {'Volume':'m3'}
    
-   def __init__(self,ID='',ins = None, outs = (), thermo=None, soak_time = 0.5, cycles_before_dump = 4):
+   def __init__(self,ID='',ins = None, outs = (), thermo=None, soak_time = 0.5, 
+                cycles_before_dump = 4,N_workers=1,N_shifts=2):
        super().__init__(ID,ins,outs,thermo)
        self.soak_time = soak_time
        self.cycles_before_dump = cycles_before_dump
+       self.N_shifts = N_shifts
+       self.N_workers = N_workers
     
    def _run(self):
         bags_in, water_in, paa_in = self.ins
@@ -2720,7 +2724,9 @@ class Disinfection_Unit(bst.Unit):
         
         # 4. Disinfectant (PAA) Dosing
         paa_concentration = 0.002
-        total_paa_makeup = total_water_makeup * paa_concentration
+        
+        total_paa_makeup = total_water_makeup * paa_concentration*6.67
+        water_inside_paa = total_paa_makeup*0.85
         dirt_flow = plastic_flow * 0.05
         
         # --- Output Streams ---
@@ -2742,7 +2748,7 @@ class Disinfection_Unit(bst.Unit):
         
         # --- Input Utilities ---
         water_in.empty()
-        water_in.imass['Water'] = total_water_makeup
+        water_in.imass['Water'] = total_water_makeup - water_inside_paa
         
         paa_in.empty()
         paa_in.imass['AceticAcid'] = total_paa_makeup
@@ -2758,6 +2764,11 @@ class Disinfection_Unit(bst.Unit):
         self.design_results['Volume'] = vessel_volume  # Key is 'Volume'
         
         self.power_utility.consumption = 1.5 * vessel_volume
+   
+   @property
+   def total_salary(self):
+      worker_salary = 5e4
+      return worker_salary*self.N_shifts*self.N_workers*1.6
     
    def _cost(self):
         # Fetch using the exact same key: 'Volume'
@@ -2776,7 +2787,10 @@ class Disinfection_Unit(bst.Unit):
         self.purchase_costs['Disinfection System'] = base_cost
         
         # 3. Installed Cost 
-        self.installed_costs['Disinfection System'] = base_cost * 2.0
+        self.installed_costs['Disinfection System'] = base_cost * 2
+    
+    
+
 
 
 #defining a vacuum storage unit class
@@ -2811,7 +2825,7 @@ class VacuumStorageDryer(bst.Unit):
     
     # Instructs BioSTEAM to treat the vacuum pump system as an internal sub-unit.
     # This automatically tracks and includes its electrical utility draw (kW) in the process tables.
-    auxiliary_unit_names = ()
+    auxiliary_unit_names = ('vacuum_system')
     
     _N_ins = 1
     _N_outs = 2
@@ -2882,9 +2896,42 @@ class VacuumStorageDryer(bst.Unit):
         # Sized smaller for a 15-minute pass-through, we apply an adjusted baseline value
         self.baseline_purchase_costs['Combined Vacuum system'] = 35000.0
         self.F_BM['Combined Vacuum system'] = 3.0  # Bare module material/installation factor
+       # -------------------------------------------------------------
+        # 1. HEATING UTILITY (Evaporation / Heating Duty)
+        # -------------------------------------------------------------
+        H_in = self.ins[0].H
+        H_out = sum([out.H for out in self.outs])
+        duty = H_out - H_in  # kJ/hr
+
+        self.heat_utilities.clear()
+        if duty > 0:
+            hu = self.create_heat_utility()
+            hu(duty, self.T)  # Sets heating duty & auto-selects heating agent at self.T
+
+        # -------------------------------------------------------------
+        # 2. CONDENSER UTILITY (Chiller Electric Power Draw)
+        # -------------------------------------------------------------
+        solvent_vapor = self.outs[1]
+
+        if not solvent_vapor.isempty():
+            # Exact latent heat of condensation using enthalpy difference (kJ/hr)
+            vapor_liquid = solvent_vapor.copy()
+            vapor_liquid.phase = 'l'
+            H_cond_kJ_hr = max(0.0, solvent_vapor.H - vapor_liquid.H)  # kJ/hr
+
+            # Convert thermal load from kJ/hr to kW thermal
+            q_thermal_kW = H_cond_kJ_hr / 3600.0
+
+            cop = getattr(self, "condenser_COP", 3.0)
+            electric_power_kW = q_thermal_kW / cop
+
+            # Assign chiller electrical draw (kW)
+            self.power_utility.rate = electric_power_kW
+        else:
+            self.power_utility.rate = 0.0
     
   
-# Neodymium Magnet Recovery
+# Neod ymium Magnet Recovery
 class MagnetHandSorting (bst.Unit):
     _N_ins=1
     _N_outs=2
@@ -2894,6 +2941,7 @@ class MagnetHandSorting (bst.Unit):
         super().__init__(ID,ins,outs,thermo)
         self.N_workers = N_workers
         self.N_shifts = N_shifts
+        self.F_BM = 2
     
     def _run(self):
         feed = self.ins[0]
@@ -2908,6 +2956,7 @@ class MagnetHandSorting (bst.Unit):
         
         impellers.imass['NdFeB'] = feed.imass['NdFeB']
         impellers.imass['HDPE']= feed.imass['HDPE']
+        impellers.imass['Solutes'] = feed.imass['Solutes']
         
         other_components.imass['Films'] = feed.imass['Films']
         other_components.imass['FittingsFilters'] = feed.imass['FittingsFilters']
@@ -2917,7 +2966,11 @@ class MagnetHandSorting (bst.Unit):
      
             
     def _cost(self):
-        pass
+        self.power_utility.rate = 5.0                    # 5 KWh
+        self.baseline_purchase_costs['Conveyor'] = 15000
+        self.purchase_costs['Conveyor'] = 15000
+        self.installed_costs['Conveyor'] = 15000 * self.F_BM
+        
     
     @property
     def total_salary(self):
@@ -2926,11 +2979,35 @@ class MagnetHandSorting (bst.Unit):
     
     def results(self):
         import pandas as pd
-        results = {
-            "Parameters": ['Workers', 'Shifts (8hrs/shift)','Scaling(Vacation etc.)','Total Labor Cost'],
-            "Value":[self.N_workers, self.N_shifts, 1.6, self.total_salary]
-            }
-        return pd.DataFrame(results)
+        elec_power = self.power_utility.rate  # kW
+        elec_cost = self.utility_cost  # USD/hr
+
+        # Cost summaries
+        conveyor_cost = self.purchase_costs.get("Conveyor", 0.0)
+        total_purchase = sum(self.purchase_costs.values())
+        total_installed = sum(self.installed_costs.values())
+
+        # Construct MultiIndex key-value pairs
+        data = [
+            ("Electricity", "Power", "kW", elec_power),
+            ("Electricity", "Cost", "USD/hr", elec_cost),
+            ("Purchase cost", "Conveyor", "USD", conveyor_cost),
+            ("Total purchase cost", "", "USD", total_purchase),
+            ("Installed equipment cost", "", "USD", total_installed),
+            ("Utility cost", "", "USD/hr", elec_cost),          #calculated multiplying utility rate(power)xelectricity rate
+        ]
+
+        # Convert to Pandas DataFrame with a 2-level MultiIndex on rows
+        index = pd.MultiIndex.from_tuples(
+            [(item[0], item[1]) for item in data], names=[self.line, ""]
+        )
+
+        df = pd.DataFrame(
+            {"Units": [item[2] for item in data], self.ID: [item[3] for item in data]},
+            index=index,
+        )
+        
+        return df
 
 
 
@@ -3063,6 +3140,11 @@ class MagnetRecovery(bst.ProcessModel):
             precipitation_configuration=scenario.precipitation_configuration,
             turbogenerator=scenario.turbogenerator,
         )
+        
+        #to get impurities in your feed, so adsorption column can work
+        #system.ins[0].imass['Solutes'] = 0.001*system.ins[0].F_mass
+        
+        
         for i, step in zip(system.subsystems, [dissolution_step]):
             i.ID = f"{step.plastic}/{step.solvent}"
         
@@ -3079,7 +3161,13 @@ class MagnetRecovery(bst.ProcessModel):
         #making object of Handsorting class
         self.HS = MagnetHandSorting(ins = self.DisU.outs[0])  #change workers and shifts
         
+        
+        
         u = system.flowsheet.unit
+        
+        
+       
+        
            
         u.T1.ins[0] = self.HS.outs[0]
         u.U3.ins[0] = u.T1.outs[0]
@@ -3093,8 +3181,9 @@ class MagnetRecovery(bst.ProcessModel):
         #creating a splitter for magnets
         self.S_mag = bst.Splitter(split=1)
         self.S_mag.isplit['NdFeB'] =  0
-        
         self.S_mag.isplit['HDPE'] = 1
+        
+        self.S_mag.isplit['Solutes'] = 1
         
         #to make sure magnets coming out are wet
         def strict_solvent_split():

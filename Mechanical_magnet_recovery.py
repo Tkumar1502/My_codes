@@ -13,6 +13,13 @@ import numpy as np
 from biosteam import Unit
 import pandas as pd
 from biosteam.units.decorators import cost
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import matplotlib.lines as mlines
+import Cytiva_NdFeB_Magnets_TEA as cytiva
+
+
+
 filterwarnings('ignore')
 
 #from biosteam import settings
@@ -61,8 +68,8 @@ Impeller_composition = {
 
 
 #%%setting the plant conditions
-capacity = 1000*1600     #kg per year
-operating_days = 250
+capacity = 1000*1976     #kg per year
+operating_days = 309
 N_shifts = 2 
 operating_hours = operating_days*N_shifts*8
 
@@ -75,8 +82,8 @@ fresh_water_utility = bst.Stream(ID = 'Fresh_water')
 fresh_paa_utility = bst.Stream(ID = 'Peracetic Acid')
 
 
-feed_composition = {'NdFeB': 0.15,
-        'HDPE': 0.03,
+feed_composition = {'NdFeB': 0.1548,
+        'HDPE': 0.0252,
         'Films': 0.10,
         'FittingsFilters': 0.36,
         'BrownSupport': 0.07,
@@ -88,7 +95,8 @@ feed = bst.Stream(ID = 'Bioreactor Bags', units = 'kg/hr',
 bst.settings.CEPCI = 836.9      #updated to 2025
 
 #%%defining units
-#@cost(basis='Volume',ID='Disinfection System',cost=31000.0,S=4.2,n=0.6,BM =2.0,CE=836.9)
+
+
 class Disinfection_Unit(bst.Unit):
    
    _N_ins = 3
@@ -96,95 +104,90 @@ class Disinfection_Unit(bst.Unit):
    
    _units = {'Volume':'m3'}
    
-   def __init__(self,ID='',ins = None, outs = (), thermo=None, soak_time = 0.5, cycles_before_dump = 4, 
-                N_workers=1,N_shifts=2):
-       super().__init__(ID,ins,outs,thermo)
+   def __init__(self, ID='', ins=None, outs=(), thermo=None, soak_time=0.5, 
+                cycles_before_dump=4, N_workers=1, N_shifts=2):
+       super().__init__(ID, ins, outs, thermo)
        self.soak_time = soak_time
        self.cycles_before_dump = cycles_before_dump
        self.N_workers = N_workers
        self.N_shifts = N_shifts
     
    def _run(self):
-        bags_in, water_in, paa_in = self.ins
-        clean_bags_out, evap_loss, wastewater = self.outs
+       bags_in, water_in, paa_in = self.ins
+       clean_bags_out, evap_loss, wastewater = self.outs
         
-        # 1. Mass Throughput Calculations
-        plastic_flow = bags_in.F_mass 
-        bags_per_hour = plastic_flow / 4.0  
+       # 1. Mass Throughput Calculations
+       plastic_flow = bags_in.F_mass 
+       bags_per_hour = plastic_flow / 4.0  
         
-        # 2. Fluid Volume Dynamics (70 L/kg water per bag)
-        water_needed_per_hour = bags_per_hour * 70.0 
-        vessel_water_pool = water_needed_per_hour * self.soak_time 
+       # 2. Fluid Volume Dynamics (70 L/kg water per bag)
+       water_needed_per_hour = bags_per_hour * 70.0 
+       vessel_water_pool = water_needed_per_hour * self.soak_time 
         
-        # 3. Water Losses & Purge Calculations
-        hourly_evap_water = 15.0 
-        hourly_dragout_water = plastic_flow * 0.1 
+       # 3. Water Losses & Purge Calculations
+       hourly_evap_water = 15.0 
+       hourly_dragout_water = plastic_flow * 0.1 
         
-        time_between_dumps = self.cycles_before_dump * self.soak_time 
-        hourly_purge_water = vessel_water_pool / time_between_dumps
+       time_between_dumps = self.cycles_before_dump * self.soak_time 
+       hourly_purge_water = vessel_water_pool / time_between_dumps
         
-        total_water_makeup = hourly_purge_water + hourly_evap_water + hourly_dragout_water
+       total_water_makeup = hourly_purge_water + hourly_evap_water + hourly_dragout_water
         
-        # 4. Disinfectant (PAA) Dosing
-        paa_concentration = 0.002
-        total_paa_makeup = total_water_makeup * paa_concentration
-        dirt_flow = plastic_flow * 0.05
+       # 4. Disinfectant (PAA) Dosing (15% active PAA solution)
+       paa_concentration = 0.002
+       total_paa_makeup = total_water_makeup * paa_concentration * 6.67
+       water_inside_paa = total_paa_makeup * 0.85
+       dirt_flow = plastic_flow * 0.05
         
-        # --- Output Streams ---
-        wastewater.empty()
-        wastewater.imass['Water'] = hourly_purge_water
-        wastewater.imass[HDPE.ID] = dirt_flow 
-        wastewater.imass['AceticAcid'] = total_paa_makeup 
+       # --- Output Streams ---
+       wastewater.empty()
+       wastewater.imass['Water'] = hourly_purge_water
+       wastewater.imass['HDPE'] = dirt_flow 
+       wastewater.imass['AceticAcid'] = total_paa_makeup 
         
-        evap_loss.empty()
-        evap_loss.imass['Water'] = hourly_evap_water
+       evap_loss.empty()
+       evap_loss.imass['Water'] = hourly_evap_water
         
-        clean_bags_out.copy_like(bags_in)
-        for chem in ['HDPE','Films','FittingsFilters','BrownSupport','SiliconeTubings']:
-            clean_bags_out.imass[chem] = bags_in.imass[chem]*0.95
+       clean_bags_out.copy_like(bags_in)
+       for chem in ['Films', 'FittingsFilters', 'BrownSupport', 'SiliconeTubings']:
+           clean_bags_out.imass[chem] = bags_in.imass[chem] * 0.95
         
-        clean_bags_out.imass['Water'] = hourly_dragout_water
+       clean_bags_out.imass['Water'] = hourly_dragout_water
         
-        # --- Input Utilities ---
-        water_in.empty()
-        water_in.imass['Water'] = total_water_makeup
+       # --- Input Utilities ---
+       water_in.empty()
+       water_in.imass['Water'] = total_water_makeup - water_inside_paa
         
-        paa_in.empty()
-        paa_in.imass['AceticAcid'] = total_paa_makeup
+       paa_in.empty()
+       paa_in.imass['AceticAcid'] = total_paa_makeup
 
    def _design(self):
-        bags_per_hour = self.ins[0].F_mass / 4.0
-        batch_bags = bags_per_hour * self.soak_time
+       bags_per_hour = self.ins[0].F_mass / 4.0
+       batch_bags = bags_per_hour * self.soak_time
         
-        working_fluid_m3 = (batch_bags * 70.0) / 1000.0  
-        vessel_volume = working_fluid_m3 * 1.2 
+       working_fluid_m3 = (batch_bags * 70.0) / 1000.0  
+       vessel_volume = working_fluid_m3 * 1.2 
         
-        self.design_results['Vessels Required'] = 1
-        self.design_results['Volume'] = vessel_volume  # Key is 'Volume'
+       self.design_results['Vessels Required'] = 1
+       self.design_results['Volume'] = vessel_volume
         
-        self.power_utility.consumption = 1.5 * vessel_volume
+       self.power_utility.consumption = 1.5 * vessel_volume
+
+   @property
+   def total_salary(self):
+       worker_salary = 5e4
+       return worker_salary * self.N_shifts * self.N_workers * 1.6
     
    def _cost(self):
-        # Fetch using the exact same key: 'Volume'
-        V = self.design_results['Volume']
+       V = self.design_results['Volume']
         
-        # Calculate Base Cost (baseline = $31,000 for 4.2 m3, scaled to exponent 0.6)
-        base_cost = 31000.0 * (V / 4.2)**0.6
+       # Base Cost (baseline = $31,000 for 4.2 m3, scaled with 0.6 exponent)
+       base_cost = 31000.0 * (V / 4.2)**0.6
         
-        # Adjust for Inflation
-        
-        
-        # 1. Baseline Purchase Cost (The raw equipment cost)
-        self.baseline_purchase_costs['Disinfection System'] = base_cost
-        
-        # 2. Final Purchase Cost 
-        self.purchase_costs['Disinfection System'] = base_cost
-        
-        # 3. Installed Cost 
-        self.installed_costs['Disinfection System'] = base_cost * 2.0
-        
-        worker_salary = 5e4
-        self.total_salary = worker_salary*self.N_shifts*self.N_workers*1.6
+       self.baseline_purchase_costs['Disinfection System'] = base_cost
+       self.purchase_costs['Disinfection System'] = base_cost
+       self.installed_costs['Disinfection System'] = base_cost * 2.0
+
 
 class HandSorting_Unit (bst.Unit):
     _N_ins=1
@@ -195,7 +198,7 @@ class HandSorting_Unit (bst.Unit):
         super().__init__(ID,ins,outs,thermo)
         self.N_workers = N_workers
         self.N_shifts = N_shifts
-    
+        self.F_BM = 2
     def _run(self):
         feed = self.ins[0]
         other_components = self.outs[1]
@@ -222,14 +225,42 @@ class HandSorting_Unit (bst.Unit):
     def _cost(self):
         worker_salary = 5e4
         self.total_salary = worker_salary*self.N_shifts*self.N_workers*1.6
+        self.power_utility.rate = 5.0                    # 5 KWh
+        self.baseline_purchase_costs['Conveyor'] = 15000
+        self.purchase_costs['Conveyor'] = 15000
+        self.installed_costs['Conveyor'] = 15000 * self.F_BM
     
     def results(self):
         import pandas as pd
-        results = {
-            "Parameters": ['Workers', 'Shifts (8hrs/shift)','Scaling(Vacation etc.)','Total Labor Cost'],
-            "Value":[self.N_workers, self.N_shifts, 1.6, self.total_salary]
-            }
-        return pd.DataFrame(results)
+        elec_power = self.power_utility.rate  # kW
+        elec_cost = self.utility_cost  # USD/hr
+
+        # Cost summaries
+        conveyor_cost = self.purchase_costs.get("Conveyor", 0.0)
+        total_purchase = sum(self.purchase_costs.values())
+        total_installed = sum(self.installed_costs.values())
+
+        # Construct MultiIndex key-value pairs
+        data = [
+            ("Electricity", "Power", "kW", elec_power),
+            ("Electricity", "Cost", "USD/hr", elec_cost),
+            ("Purchase cost", "Conveyor", "USD", conveyor_cost),
+            ("Total purchase cost", "", "USD", total_purchase),
+            ("Installed equipment cost", "", "USD", total_installed),
+            ("Utility cost", "", "USD/hr", elec_cost),          #calculated multiplying utility rate(power)xelectricity rate
+        ]
+
+        # Convert to Pandas DataFrame with a 2-level MultiIndex on rows
+        index = pd.MultiIndex.from_tuples(
+            [(item[0], item[1]) for item in data], names=[self.line, ""]
+        )
+
+        df = pd.DataFrame(
+            {"Units": [item[2] for item in data], self.ID: [item[3] for item in data]},
+            index=index,
+        )
+        
+        return df
        
 
 class Lathe_Machine (bst.Unit):
@@ -332,99 +363,138 @@ class MechanicalRecyclingTEA(bst.TEA):
         self.supplies= supplies
         self.maintenance = maintenance
         self.administration = administration
+        self.custom_osbl = None
         
+        
+        self.osbl_itemized = {
+        "1. Site Acquisition (Pre-Built Facility)": 2250000.0,
+        "2. Electrical Infrastructure Upgrade": 60000.0,
+        "3. Fire Suppression & Life Safety Retrofit": 30000.0,
+        "4. Medical, Health & OSHA Safety": 12000.0,
+        "5. Compressed Air & Utility Piping Network": 35000.0,
+        "6. Civil & Concrete Floor Reinforcement": 28000.0,
+        "7. QC Analytical Station / Lab Space": 35000.0,
+        "8. Maintenance Shop & Tool Crib": 25000.0,
+    }
     
     
+    # --- Direct Costs ---
+    @property
+    def ISBL(self):
+        return self.installed_equipment_cost
+
+    @property
+    def OSBL(self):
+        return sum(self.osbl_itemized.values())
+    
+    def OSBL_table(self,formatted=True):
+        """Returns the itemized OSBL Cost Breakdown table (Cost Category & Cost)."""
+        categories = list(self.osbl_itemized.keys()) + [
+            "TOTAL DIRECT ASSET & OSBL COST"
+        ]
+        costs = list(self.osbl_itemized.values()) + [self.OSBL]
+    
+        if formatted:
+          formatted_costs = [f"${c:,.0f}" for c in costs]
+          df = pd.DataFrame(
+              {"Cost Category": categories, "Cost ($)": formatted_costs}
+          )
+        else:
+          df = pd.DataFrame({"Cost Category": categories, "Cost ($)": costs})
+    
+        return df.set_index("Cost Category")
+
+    # --- BioSTEAM Engine Overrides ---
     def _DPI(self, installed_equipment_cost):
-        return installed_equipment_cost
-    def _TDC(self, DPI): 
-        isbl = DPI
-        osbl = DPI*0.4
-        warehouse = 0.04*isbl
-        site_dev = 0.25*isbl
-        piping=0.045*isbl
-        return isbl + osbl + warehouse + site_dev + piping
-    
-    def _FCI(self, TDC): 
-        proratable = 0.10*TDC
-        field_exp = 0.10*TDC
-        construction = 0.20*TDC
-        contingency = 0.40*TDC
-        other_startup = 0.10*TDC
-        TIC = proratable + field_exp + construction + contingency + other_startup
-        return TDC + TIC
-    
+        """Direct Permanent Investment"""
+        return self.ISBL + self.OSBL
+
+    def _TDC(self, DPI):
+        """Total Direct Cost"""
+        return DPI
+
+    def _FCI(self, TDC):
+        """Fixed Capital Investment (Direct + Indirects)"""
+        indirect_costs = 0.90 * TDC
+        return TDC + indirect_costs
+
     def _FOC(self, FCI): 
-        return (FCI*(self.property_tax + self.property_insurance
+        """Fixed Operating Costs"""
+        return (FCI * (self.property_tax + self.property_insurance
                      + self.maintenance + self.administration)
-                + self.labor_cost*(1+self.fringe_benefits+self.supplies))  # Maintenance insurance fixed at 2% CapEx
-    
-    
-    
+                + self.labor_cost * (1 + self.fringe_benefits + self.supplies))
+
+    # --- Convenience Properties ---
+    @property
+    def engineering_cost(self):
+        return 0.50 * self.TDC
+
+    @property
+    def contingency(self):
+        return 0.40 * self.TDC
+
+    @property
+    def TIC(self):
+        return self.engineering_cost + self.contingency
+
+    @property
+    def WC(self):
+        return self.WC_over_FCI * self.FCI
+        
+
+    @property
+    def TCI(self):
+        return self.FCI + self.WC
+
+    # --- CAPEX Table Method ---
     def CAPEX_table(self):
-        """Generates a standardized chemical engineering CAPEX ledger in Millions of USD."""
-        
-        fci = self.FCI/1e6
-        tci = self.TCI/1e6
-        wc = self.working_capital/1e6
+        """Displays your simplified CAPEX table whenever process.tea.CAPEX_table() is called."""
+        isbl = self.ISBL/1e6
+        osbl = self.OSBL/1e6
         tdc = self.TDC/1e6
-        DPI = self.DPI/1e6
+        eng = self.engineering_cost/1e6
+        cont = self.contingency/1e6
+        tic = self.TIC/1e6
+        fci = self.FCI/1e6
+        wc = self.WC/1e6
+        tci = self.TCI/1e6
         
-        isbl = DPI
-        osbl = DPI*0.4
-        warehouse = 0.04*isbl
-        site_dev = 0.25*isbl
-        piping=0.045*isbl
-        
-        proratable = 0.10 * tdc
-        field_exp = 0.10 * tdc
-        construction = 0.20 * tdc
-        contingency = 0.40 * tdc
-        other_startup = 0.10 * tdc
-        
-        tic = proratable + field_exp + construction + contingency + other_startup
-        # 6. Build the structural DataFrame
         index = [
             ('Direct costs', 'ISBL installed equipment cost'),
             ('Direct costs', 'OSBL installed equipment cost'),
-            ('Direct costs', 'Warehouse'),
-            ('Direct costs', 'Site development'),
-            ('Direct costs', 'Additional piping'),
             ('Total direct cost (TDC)', ''),
-            ('Indirect costs', 'Proratable costs'),
-            ('Indirect costs', 'Field expenses'),
-            ('Indirect costs', 'Construction'),
+            ('Indirect costs', 'Engineering & field overhead'),
             ('Indirect costs', 'Contingency'),
-            ('Indirect costs', 'Other (start-up, permits, etc.)'),
             ('Total indirect cost (TIC)', ''),
             ('Fixed capital investment (FCI)', ''),
             ('Working capital (WC)', ''),
             ('Total capital investment (TCI)', '')
         ]
-        
+
         notes = [
-            '', '', '4.0% of ISBL', '25.0% of ISBL', '4.5% of ISBL',
-            '', '10.0% of TDC', '10.0% of TDC', '20.0% of TDC', '40.0% of TDC', '10.0% of TDC',
-            '', 'TDC + TIC', f'{self.WC_over_FCI*100:.1f}% of FCI', 'FCI + WC'
+            '', 
+            '', 
+            '', 
+            '50.0% of TDC', 
+            '40.0% of TDC', 
+            '', 
+            'TDC + TIC', 
+            '25% of FCI', 
+            'FCI + WC'
         ]
-        
-        costs = [
-            isbl, osbl, warehouse, site_dev, piping, tdc,
-            proratable, field_exp, construction, contingency, other_startup, tic,
-            fci, wc, tci
-        ]
-        
+
+        costs = [isbl, osbl, tdc, eng, cont, tic, fci, wc, tci]
+
         df = pd.DataFrame(
             {'Notes': notes, 'Cost [MM$]': [round(c, 3) for c in costs]},
             index=pd.MultiIndex.from_tuples(index)
         )
-        
-        return df 
+        return df
 
 
 
 
-#%%
+#%%assigning units
 #U1 = Disinfection_Unit('U1', ins = feed)
 U1 = Disinfection_Unit('U1', ins=(feed, fresh_water_utility, fresh_paa_utility), 
                        outs=('clean_rinsed_bags', 'evaporative_loss', 'sewer_effluent'))
@@ -449,7 +519,7 @@ U4.outs[0].ID = U5.outs[0].ID = 'NdFeB Magnets'
 U4.outs[1].ID = U5.outs[1].ID = 'waste hdpe casings'
 U3.outs[1].ID = 'waste hdpe shavings'
 S2.outs[0].ID = 'other components'
-S2.outs[1].ID = 'water'
+S2.outs[1].ID = 'wastewater'
 
 process = bst.System('mechanical_magnet_recovery', path = (U1, U2, U3,S1,U4,U5,M1,M2,S2))
 
@@ -458,22 +528,24 @@ NdFeB_magnets = M1.outs[0]
 HDPE_casing = M2.outs[0] 
 HDPE_shavings = U3.outs[1]
 other_components = S2.outs[0]
-waste_water = S2.outs[1]
+waste_water = U1.outs[2]
 
 #setting up prices
 NdFeB_magnets.price = 100
 HDPE_casing.price= -0.072
 HDPE_shavings.price = -0.072
 other_components.price = -0.072
-waste_water.price = -0.002642                #considering 10usd for 1000 gallons
+waste_water.price = -0.003               
+S2.outs[1].price = -0.003
+
 
 #feed stock handling and transportation
 feed.price = 0.25
 
 
 #raw materials cost
-fresh_water_utility = 0.002
-fresh_paa_utility = 2.50
+fresh_water_utility.price = 0.0015
+fresh_paa_utility.price = 8.8
 
 
 process.simulate()
@@ -496,7 +568,7 @@ tea = MechanicalRecyclingTEA(
     operating_days=adjusted_days,
     lang_factor=None,
     construction_schedule=(1.0,),
-    WC_over_FCI=0.12,
+    WC_over_FCI=0.25,
     labor_cost=total_labor_cost,
     fringe_benefits=0.4,
     property_tax=0.001,
@@ -508,7 +580,561 @@ tea = MechanicalRecyclingTEA(
 
 
 
+#%%defining functions for TEA
+def my_profit(processing_capacity, ndfeb_price, ndfeb_conc, feed_price, peraceticacid_price, freshwater_price,
+              othercomponent_fee, wastewater_fee, hdpe_fee, worker_salary):
+    
+    NdFeB_magnets.price = 0.0
+    feed.price = 0.0
+    fresh_paa_utility.price = 0.0
+    fresh_water_utility.price = 0.0
+    other_components.price = 0.0
+    HDPE_casing.price = 0.0
+    HDPE_shavings.price = 0.0
+    waste_water.price = 0.0
+    S2.outs[1].price = 0.0
+    
+    capacity = processing_capacity*1000
+    NdFeB_magnets.price = ndfeb_price
+    feed.price = feed_price
+    fresh_paa_utility.price = peraceticacid_price
+    fresh_water_utility.price = freshwater_price
+    
+    #fee are negative priced products
+    other_components.price = -othercomponent_fee
+    HDPE_casing.price = -hdpe_fee
+    HDPE_shavings.price  = -hdpe_fee
+    waste_water.price = -wastewater_fee
+    S2.outs[1].price = -wastewater_fee
+    
+    #worker salary
+    N_shifts = 2
+    tea.labor_cost = worker_salary*N_shifts*6*1.6       #6 here are the total workers
+    
+    work_hours = capacity/ 400            #4kg per bag 100impellers/hours output
+    feed_per_hour = capacity / work_hours
+    tea.operating_hours = work_hours
+    process.operating_hours = work_hours
+    
+    
+    feed.imass['NdFeB'] = feed_per_hour * (0.18 * ndfeb_conc)
+    feed.imass['HDPE'] = feed_per_hour * (0.18 * (1.0 - ndfeb_conc))
+    
+    # Remaining baseline feedstock matrix components
+    feed.imass['Films'] = feed_per_hour * 0.10
+    feed.imass['FittingsFilters'] = feed_per_hour * 0.36
+    feed.imass['BrownSupport'] = feed_per_hour * 0.07
+    feed.imass['SiliconeTubings'] = feed_per_hour * 0.29
+    
+    process.simulate()
+    return tea.net_earnings
+
+def my_irr(processing_capacity, ndfeb_price, ndfeb_conc, feed_price, peraceticacid_price, freshwater_price,
+              othercomponent_fee, wastewater_fee, hdpe_fee, worker_salary):
+    
+    NdFeB_magnets.price = 0.0
+    feed.price = 0.0
+    fresh_paa_utility.price = 0.0
+    fresh_water_utility.price = 0.0
+    other_components.price = 0.0
+    HDPE_casing.price = 0.0
+    HDPE_shavings.price = 0.0
+    waste_water.price = 0.0
+    S2.outs[1].price = 0.0
+    
+    capacity = processing_capacity*1000
+    NdFeB_magnets.price = ndfeb_price
+    feed.price = feed_price
+    fresh_paa_utility.price = peraceticacid_price
+    fresh_water_utility.price = freshwater_price
+    
+    #fee are negative priced products
+    other_components.price = -othercomponent_fee
+    HDPE_casing.price = -hdpe_fee
+    HDPE_shavings.price  = -hdpe_fee
+    waste_water.price = -wastewater_fee
+    S2.outs[1].price = -wastewater_fee
+    
+    #worker salary
+    N_shifts = 2
+    tea.labor_cost = worker_salary*N_shifts*6*1.6       #6 here are the total workers
+    
+    work_hours = capacity/ 400            #4kg per bag 100impellers/hours output
+    feed_per_hour = capacity / work_hours
+    tea.operating_hours = work_hours
+    process.operating_hours = work_hours
+    
+    
+    feed.imass['NdFeB'] = feed_per_hour * (0.18 * ndfeb_conc)
+    feed.imass['HDPE'] = feed_per_hour * (0.18 * (1.0 - ndfeb_conc))
+    
+    # Remaining baseline feedstock matrix components
+    feed.imass['Films'] = feed_per_hour * 0.10
+    feed.imass['FittingsFilters'] = feed_per_hour * 0.36
+    feed.imass['BrownSupport'] = feed_per_hour * 0.07
+    feed.imass['SiliconeTubings'] = feed_per_hour * 0.29
+    
+    process.simulate()
+    return tea.solve_IRR()*100
+
+
+import scipy.optimize as opt
+def scale_feedstock_flow():
+    """Helper function to scale the feed stream for a target annual MT processing scale.
+
+    Maintains fixed flow basis (400 kg/hr throughput). Defaults to baseline
+    (1,976 MT/yr).
+    """
+    scale_mt_yr = 1976.0  # Baseline processing scale in MT/yr
+    capacity_kg = scale_mt_yr * 1000.0
+    
+    feed_rate = 400
+    # Calculate operating hours keeping feed_per_hour standard
+    work_hours = (
+        capacity_kg / feed_rate
+    )  # Total hourly feed rate at baseline (1976 MT / 4000 hrs = 494 kg/hr)
+    feed_per_hour = capacity_kg / work_hours if work_hours > 0 else 0
+
+    # Update operating hours in TEA and System
+    tea.operating_hours = work_hours
+    process.operating_hours = work_hours
+
+    # Scale component mass flow rates (kg/hr)
+    for chem, frac in feed_composition.items():
+        feed.imass[chem] = feed_per_hour * frac
+
+
+# ==========================================
+# 2. Capacity Curve Sweep Function
+# ==========================================
+
+
+def get_capacity_curve():
+    """Calculates capacity vs. net earnings using BioSTEAM stream updates.
+
+    Internal defaults: min_scale=50 MT, max_scale=2000 MT.
+    """
+    # Restore original stream prices & disposal fees
+    NdFeB_magnets.price = 100.0
+    HDPE_casing.price = -0.072
+    HDPE_shavings.price = -0.072
+    other_components.price = -0.072
+    waste_water.price = -0.003
+    S2.outs[1].price = -0.003
+    feed.price = 0.25
+    fresh_water_utility.price = 0.0015
+    fresh_paa_utility.price = 8.80
+
+    # Restore baseline feedstock flow rate (1,976 MT/yr)
+    # Note: 1,976,000 kg / operating_hours
+    feed.F_mass = 1976000.0 / operating_hours
+
+    # Re-calculate total labor cost and update TEA
+    total_labor_cost = U1.total_salary + U2.total_salary + U4.total_salary + U5.total_salary + U3.total_salary
+    tea.labor_cost = total_labor_cost
+
+    # Re-simulate system to flush out tornado_plot state
+    process.simulate()
+    
+    min_scale_mt = 50
+    max_scale_mt = 2000
+    num_high_points = 8
+
+    # 1. Capture exact 1,976 MT baseline values
+    scale_feedstock_flow()
+    process.simulate()
+
+    baseline_sales = tea.sales
+    baseline_voc = tea.VOC
+    baseline_foc = tea.FOC
+    tax_rate = getattr(tea, "income_tax", 0.21)
+
+    # 2. Define income statement simulator
+    def simulate_profit(scale_mt):
+        if scale_mt < 1976:
+            # Linear scaling for throughput-dependent revenues and variable costs
+            scale_ratio = scale_mt / 1976.0
+            sales = baseline_sales * scale_ratio
+            voc = baseline_voc * scale_ratio
+            foc = baseline_foc  # Fixed FOC floor at 1,976 MT scale
+
+            taxable_income = sales - (voc + foc)
+            earnings = taxable_income * (1.0 - tax_rate)
+        else:
+            # Re-scale feed stream dynamically for scales >= 1,976 MT
+            capacity_kg = scale_mt * 1000.0
+            work_hours = capacity_kg / 494.0
+            feed_per_hour = capacity_kg / work_hours if work_hours > 0 else 0
+
+            tea.operating_hours = work_hours
+            process.operating_hours = work_hours
+
+            for chem, frac in feed_composition.items():
+                feed.imass[chem] = feed_per_hour * frac
+
+            process.simulate()
+            earnings = tea.net_earnings
+
+        return earnings
+
+    # 3. Find exact break-even point using bisect
+    print("1. Finding exact break-even point...")
+    try:
+        sol = opt.root_scalar(
+            simulate_profit,
+            bracket=[min_scale_mt, 1976],
+            method="bisect",
+            xtol=0.1,
+        )
+        exact_be = sol.root
+    except ValueError:
+        exact_be = min_scale_mt
+
+    print(
+        f"   -> Break-even capacity (Fixed FOC Floor): {exact_be:.1f} MT/yr"
+    )
+
+    # 4. Generate points for capacity curve
+    print("2. Generating simulation points...")
+    low_scales = np.linspace(min_scale_mt, 272, 6)
+    high_scales = np.linspace(445, max_scale_mt, num_high_points)
+
+    all_scales = np.unique(
+        np.sort(np.concatenate(([exact_be], low_scales, high_scales)))
+    )
+
+    scale_mt_list = []
+    profit_mm_list = []
+
+    # 5. Sweep through capacities
+    for scale_mt in all_scales:
+        earnings = simulate_profit(scale_mt)
+        scale_mt_list.append(round(scale_mt, 1))
+        profit_mm_list.append(round(earnings / 1e6, 2))
+
+    return scale_mt_list, profit_mm_list
 
 
 
 
+
+
+
+
+
+
+
+#%%defining plotting functions
+def tornado_plot():
+    """Runs economic sensitivity analysis and generates tornado plots for both
+
+    Net Earnings and IRR with zero required arguments.
+    """
+    base_params = {
+        "processing_capacity": 1976,
+        "ndfeb_price": 100,
+        "ndfeb_conc": 0.86,
+        "feed_price": 0.25,
+        "peraceticacid_price": 8.8,
+        "freshwater_price": 0.0015,
+        "hdpe_fee": 0.072,
+        "wastewater_fee": 0.003,
+        "othercomponent_fee": 0.072,
+        "worker_salary": 5e4,
+    }
+
+    ranges = {
+        "processing_capacity": (990, 2965),
+        "ndfeb_price": (50, 150),
+        "ndfeb_conc": (0.80, 0.90),
+        "feed_price": (0.1, 0.5),
+        "peraceticacid_price": (4.4, 13.2),
+        "freshwater_price": (0.0008, 0.002),
+        "hdpe_fee": (0.01, 0.1),
+        "wastewater_fee": (0.001, 0.005),
+        "othercomponent_fee": (0.01, 0.1),
+        "worker_salary": (4e4, 7e4),
+    }
+
+    label_map = {
+        "processing_capacity": "Capacity",
+        "ndfeb_price": "NdFeB Price ($/kg)",
+        "ndfeb_conc": "NdFeB Concentration in Impeller",
+        "feed_price": "Feedstock Price ($/kg)",
+        "peraceticacid_price": "Peracetic Acid Price ($/kg)",
+        "freshwater_price": "Freshwater Price ($/kg)",
+        "hdpe_fee": "HDPE fee",
+        "wastewater_fee": "Wastewater Fee ($/L)",
+        "othercomponent_fee": "Othercomponent Fee ($/kg)",
+        "worker_salary": "Worker Salary (in k's)",
+    }
+
+    results = []
+    results_irr = []
+
+    base_profit_m = my_profit(**base_params) / 1e6
+    base_irr_m = my_irr(**base_params)
+
+    for param, (low, high) in ranges.items():
+        p_low = base_params.copy()
+        p_low[param] = low
+        p_high = base_params.copy()
+        p_high[param] = high
+
+        low_profit_m = my_profit(**p_low) / 1e6
+        high_profit_m = my_profit(**p_high) / 1e6
+
+        low_irr = my_irr(**p_low)
+        high_irr = my_irr(**p_high)
+
+        display_low = low / 1000.0 if param == "worker_salary" else low
+        display_high = high / 1000.0 if param == "worker_salary" else high
+
+        results.append((
+            label_map[param],
+            low_profit_m,
+            high_profit_m,
+            abs(high_profit_m - low_profit_m),
+            display_low,
+            display_high,
+        ))
+
+        results_irr.append((
+            label_map[param],
+            low_irr,
+            high_irr,
+            abs(high_irr - low_irr),
+            display_low,
+            display_high,
+        ))
+
+    # Internal helper to render the bar chart
+    def _render_chart(data, base_val, title, x_label):
+        data.sort(key=lambda x: x[3], reverse=True)
+        names = [d[0] for d in data]
+        lows = [d[1] for d in data]
+        highs = [d[2] for d in data]
+        p_lows = [d[4] for d in data]
+        p_highs = [d[5] for d in data]
+
+        plt.figure(figsize=(10, 5))
+
+        # Low value to baseline = red
+        plt.barh(
+            names,
+            [base_val - l for l in lows],
+            left=lows,
+            color="red",
+            edgecolor="black",
+            alpha=0.8,
+        )
+
+        # Baseline to high value = green
+        plt.barh(
+            names,
+            [h - base_val for h in highs],
+            left=[base_val] * len(names),
+            color="green",
+            edgecolor="black",
+            alpha=0.8,
+        )
+
+        plt.axvline(
+            base_val, color="blue", linestyle="--", linewidth=2.0, zorder=3
+        )
+
+        x_min, x_max = plt.xlim()
+        x_gap = 0.03 * (x_max - x_min)
+
+        bars = plt.gca().patches
+        # Annotate text labels
+        for i, (lo, hi) in enumerate(zip(p_lows, p_highs)):
+            y = i
+            plt.text(
+                lows[i] - x_gap,
+                y,
+                f"{lo}",
+                ha="right",
+                va="center",
+                fontsize=11,
+                fontweight="bold",
+                color="grey",
+            )
+            plt.text(
+                highs[i] + x_gap,
+                y,
+                f"{hi}",
+                ha="left",
+                va="center",
+                fontsize=11,
+                fontweight="bold",
+                color="grey",
+            )
+
+        all_points = lows + highs + [base_val]
+        padding = (max(all_points) - min(all_points)) * 0.25
+        plt.xlim(min(all_points) - padding, max(all_points) + padding)
+
+        ax = plt.gca()
+        ax.set_title(title, fontsize=15, fontweight="bold", pad=15)
+        plt.xlabel(x_label, fontsize=13, fontweight="bold")
+        plt.xticks(fontsize=11, fontweight="bold")
+        plt.yticks(fontsize=11, fontweight="bold")
+
+        for spine in ax.spines.values():
+            spine.set_linewidth(2)
+
+        red_patch = mpatches.Patch(color="red", label="Losing money")
+        green_patch = mpatches.Patch(color="green", label="Gaining money")
+        baseline_legend = mlines.Line2D(
+            [],
+            [],
+            color="blue",
+            linestyle="--",
+            label=f"Baseline: {base_val:.2f}",
+        )
+
+        leg = plt.legend(
+            handles=[red_patch, green_patch, baseline_legend],
+            prop={"weight": "bold", "size": 11},
+            loc="best",
+        )
+        leg.get_frame().set_edgecolor("black")
+        leg.get_frame().set_linewidth(2)
+
+        plt.tight_layout()
+        plt.show()
+
+    # Render both plots directly
+    _render_chart(
+        results,
+        base_profit_m,
+        "Mechanical Method Sensitivity: Net Earnings",
+        "Profit ($ Millions)",
+    )
+    _render_chart(
+        results_irr, base_irr_m, "Mechanical Method Sensitivity: IRR", "IRR (%)"
+    )
+
+
+def plot_profit_vs_scale():
+    """Plots Net Earnings vs. Processing Capacity.
+
+    Automatically runs get_capacity_curve() internally with zero arguments.
+    """
+    # -------------------------------------------------------------------------
+    # 0. RESET GUARD: Restore original stream prices and baseline feed rate
+    # -------------------------------------------------------------------------
+    
+    
+    
+    # 1. Fetch capacity curve data internally
+    scale_mt_list, profit_list = get_capacity_curve()
+
+    impeller_frac = 1.0  # Default 100% processing scale basis
+
+    # 2. Scale capacity list by impeller_frac
+    scaled_scales = [s * impeller_frac for s in scale_mt_list]
+
+    # 3. Deduplicate points that round to the same integer label
+    dedup_data = {}
+    for scale, profit in zip(scaled_scales, profit_list):
+        label_key = int(round(scale))
+        if label_key not in dedup_data:
+            dedup_data[label_key] = profit
+
+    x_labels = [str(k) for k in dedup_data.keys()]
+    clean_profits = list(dedup_data.values())
+
+    # 4. Setup figure
+    plt.close("all")
+    fig, ax = plt.subplots(figsize=(12, 6), dpi=300)
+
+    colors = [
+        "#8b0000" if p < 0 else plt.cm.Greens(0.3 + 0.7 * (p / max(clean_profits)))
+        for p in clean_profits
+    ]
+    bars = ax.bar(x_labels, clean_profits, color=colors, width=0.5)
+    ax.axhline(0, color="black", linestyle="--", linewidth=1)
+
+    max_val = (
+        max(abs(np.array(clean_profits))) if len(clean_profits) > 0 else 1.0
+    )
+
+    for bar, profit in zip(bars, clean_profits):
+        yval = bar.get_height()
+        if profit >= 0:
+            va_align = "bottom"
+            offset = 0.02 * max_val
+            text_color = "#005a00"
+        else:
+            va_align = "top"
+            offset = -0.02 * max_val
+            text_color = "#8b0000"
+
+        ax.text(
+            bar.get_x() + bar.get_width() / 2.0,
+            yval + offset,
+            f"${profit:.2f}M",
+            ha="center",
+            va=va_align,
+            fontsize=8,
+            fontweight="bold",
+            color=text_color,
+        )
+
+    title = "Mechanical Recovery Profitability"
+    x_label = "Bioreactor Bags Feedstock [Metric Tonnes / yr]"
+
+    ax.set_title(title, fontsize=14, fontweight="bold", pad=15)
+    ax.set_xlabel(x_label, fontsize=11, fontweight="bold", labelpad=10)
+    ax.set_ylabel(
+        "Net Earnings [MM$ / yr]", fontsize=11, fontweight="bold", labelpad=10
+    )
+
+    ax.set_ylim(bottom=-5, top=25)
+    plt.xticks(rotation=45, ha="right", fontweight="bold")
+    plt.yticks(fontweight="bold")
+
+    for spine in ax.spines.values():
+        spine.set_linewidth(1.5)
+        spine.set_color("black")
+
+    plt.tight_layout()
+    plt.show()
+
+
+
+
+
+#%%LCA
+#%% LCA Characterizatio n###
+GWP = 'GWP'
+FFC = 'FFC'
+WU = 'WU'
+HTC = 'HTC'
+HTNC = 'HTNC'
+ETOX = 'ETOX'
+ACD = 'ACD'
+OZD = 'OZD'
+POCP = 'POCP'
+
+
+                       
+
+
+
+
+
+
+
+#%%CFs for peracetic acid
+process.feeds[2].ID = "peracetic_acid"
+process.feeds[2].set_CF(GWP, 0.0)
+
+
+#%%CFs for freshwater
+U1.ins[1].ID = 'fresh_water'
+U1.ins[1].set_CF(GWP,0.0)
+
+inventory_table = bst.report.lca_inventory_table(systems =[process],keys=GWP, items=process.products)

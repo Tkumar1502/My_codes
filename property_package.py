@@ -96,7 +96,7 @@ STRAP_chemicals_outline = bst.ChemicalsOutline([
          aliases = set(['AceticAcid']),
          search_db = False,
          phase = 'l',
-         rho = 0.5*(1.11 + 1.22),
+         rho = 0.5*(1.13 + 1.15),
          default = True,
          formula = 'C2H4O3'
          

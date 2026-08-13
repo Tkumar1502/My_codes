@@ -53,7 +53,7 @@ def show_svg(path):
     display(SVG(filename=str(path)))
 
 #define scenario
-processing_capacity=325
+processing_capacity=200
 
 #single wash
 process = strap.BaselineSTRAPProcess(
@@ -75,7 +75,7 @@ process.system.diagram(format='png') # Note how the leftover plastic is sent to 
 #define products and set sale prices
 products = [process.PE_resin, process.leftover_plastic]
 process.PE_resin.price = 1.20 #+ 0.072 # $1.20 / kg
-process.leftover_plastic.price = 100#-0.072#8.00 # $8.00 / kg
+process.leftover_plastic.price = -0.072#8.00 # $8.00 / kg
 
 #bounds 1-wash
 process.set_polymer_mass_fraction.bounds=(.6, .95)
@@ -91,7 +91,7 @@ process.set_feedstock_price.bounds=(0.072,0.172)
 process.plastic.ID='Feedstock_plastic'
 process.set_dissolution_temperature.baseline = 373
 process.set_solvent_loss.baseline = 0.1
-process.set_polymer_mass_fraction.baseline = 0.14
+process.set_polymer_mass_fraction.baseline = 0.9
 process.set_dissolution_capacity.baseline = 5.0
 process.set_precipitation_temperature.baseline = 45+273
 process.set_feedstock_price.baseline=(0.05)
