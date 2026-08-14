@@ -16,7 +16,7 @@ from biosteam.units.decorators import cost
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.lines as mlines
-import Cytiva_NdFeB_Magnets_TEA as cytiva
+#import Cytiva_NdFeB_Magnets_TEA as cytiva
 
 
 
@@ -171,7 +171,7 @@ class Disinfection_Unit(bst.Unit):
        self.design_results['Vessels Required'] = 1
        self.design_results['Volume'] = vessel_volume
         
-       self.power_utility.consumption = 1.5 * vessel_volume
+       self.power_utility.rate = 0.25 * vessel_volume
 
    @property
    def total_salary(self):
@@ -219,13 +219,16 @@ class HandSorting_Unit (bst.Unit):
         other_components.imass['SiliconeTubings'] = feed.imass['SiliconeTubings']
         other_components.imass['Water'] = feed.imass['Water']
      
+        
+    def _design(self):
+        self.power_utility.rate = 0.25
             
         
 
     def _cost(self):
         worker_salary = 5e4
         self.total_salary = worker_salary*self.N_shifts*self.N_workers*1.6
-        self.power_utility.rate = 5.0                    # 5 KWh
+        self.power_utility.rate = 0.25                    
         self.baseline_purchase_costs['Conveyor'] = 15000
         self.purchase_costs['Conveyor'] = 15000
         self.installed_costs['Conveyor'] = 15000 * self.F_BM
@@ -268,7 +271,7 @@ class Lathe_Machine (bst.Unit):
     _N_outs = 2
     
     
-    def __init__(self, ID='', ins=None, outs=(), thermo=None, power_kw=7.5, 
+    def __init__(self, ID='', ins=None, outs=(), thermo=None, power_kw=3, 
                  purchase_cost=15000, BM =2.0,N_workers=1,N_shifts=2) :
         super().__init__(ID, ins, outs, thermo)
         self.power_kw = power_kw          # kW rating of the industrial lathe
@@ -292,7 +295,7 @@ class Lathe_Machine (bst.Unit):
     def _design(self):
         # 1. TEA: Tell BioSTEAM how much electricity this unit pulls while running
         # BioSTEAM automatically converts power (kW) * operating hours into utility costs
-        self.power_utility.consumption = self.power_kw 
+        self.power_utility.rate = self.power_kw 
         
         # 2. TEA: Map out design parameters if scaling up (optional, defaults to 1)
         self.design_results['Power rating'] = self.power_kw
@@ -329,7 +332,7 @@ class Arbor_Press(bst.Unit):
         waste_hdpe.imass['HDPE'] = feed.imass['HDPE']
         
     def _design(self):
-        self.power_utility.consumption = self.power_kw
+        self.power_utility.rate = self.power_kw
 
     def _cost(self):
         worker_salary = 5e4
@@ -499,7 +502,7 @@ class MechanicalRecyclingTEA(bst.TEA):
 U1 = Disinfection_Unit('U1', ins=(feed, fresh_water_utility, fresh_paa_utility), 
                        outs=('clean_rinsed_bags', 'evaporative_loss', 'sewer_effluent'))
 U2 = HandSorting_Unit('U2', ins = U1-0, N_shifts =2, N_workers = 2)
-U3 = Lathe_Machine('U3', ins = U2-0)
+U3 = Lathe_Machine('U3', ins = U2-0,power_kw=3)
 
 S1 = bst.Splitter('S1', ins=U3.outs[0], outs = ('to Arbor press 1', 'to Arbor press B'), split=0.5)
 U4 = Arbor_Press('U4', S1-0)
@@ -708,119 +711,54 @@ def scale_feedstock_flow():
 # 2. Capacity Curve Sweep Function
 # ==========================================
 
-
-def get_capacity_curve():
-    """Calculates capacity vs. net earnings using BioSTEAM stream updates.
-
-    Internal defaults: min_scale=50 MT, max_scale=2000 MT.
+def get_capacity_curve(min_scale_mt=50, max_scale_mt=2000):
     """
-    # Restore original stream prices & disposal fees
-    NdFeB_magnets.price = 100.0
-    HDPE_casing.price = -0.072
-    HDPE_shavings.price = -0.072
-    other_components.price = -0.072
-    waste_water.price = -0.003
-    S2.outs[1].price = -0.003
-    feed.price = 0.25
-    fresh_water_utility.price = 0.0015
-    fresh_paa_utility.price = 8.80
-
-    # Restore baseline feedstock flow rate (1,976 MT/yr)
-    # Note: 1,976,000 kg / operating_hours
+    Calculates capacity vs. net earnings for Mechanical Recovery.
+    Preserves ALL low-scale simulation points + break-even + 250 MT steps.
+    """
+    # 1. Reset baseline (1,976 MT/yr)
     feed.F_mass = 1976000.0 / operating_hours
-
-    # Re-calculate total labor cost and update TEA
-    total_labor_cost = U1.total_salary + U2.total_salary + U4.total_salary + U5.total_salary + U3.total_salary
-    tea.labor_cost = total_labor_cost
-
-    # Re-simulate system to flush out tornado_plot state
-    process.simulate()
-    
-    min_scale_mt = 50
-    max_scale_mt = 2000
-    num_high_points = 8
-
-    # 1. Capture exact 1,976 MT baseline values
-    scale_feedstock_flow()
     process.simulate()
 
-    baseline_sales = tea.sales
-    baseline_voc = tea.VOC
-    baseline_foc = tea.FOC
+    baseline_sales, baseline_voc, baseline_foc = tea.sales, tea.VOC, tea.FOC
     tax_rate = getattr(tea, "income_tax", 0.21)
 
-    # 2. Define income statement simulator
+    # Average annual depreciation
+    cashflow_df = tea.get_cashflow_table()
+    dep_col = [c for c in cashflow_df.columns if 'Depreciation' in c][0]
+    dep_in_usd = cashflow_df[dep_col] * (1e6 if 'MM$' in dep_col else 1.0)
+    baseline_dep = dep_in_usd[dep_in_usd > 0].mean()
+
+    # 2. Profit simulator
     def simulate_profit(scale_mt):
         if scale_mt < 1976:
-            # Linear scaling for throughput-dependent revenues and variable costs
-            scale_ratio = scale_mt / 1976.0
-            sales = baseline_sales * scale_ratio
-            voc = baseline_voc * scale_ratio
-            foc = baseline_foc  # Fixed FOC floor at 1,976 MT scale
-
-            taxable_income = sales - (voc + foc)
-            earnings = taxable_income * (1.0 - tax_rate)
+            ratio = scale_mt / 1976.0
+            taxable_income = (baseline_sales * ratio) - (baseline_voc * ratio + baseline_foc + baseline_dep)
+            return taxable_income * (1.0 - tax_rate)
         else:
-            # Re-scale feed stream dynamically for scales >= 1,976 MT
             capacity_kg = scale_mt * 1000.0
             work_hours = capacity_kg / 494.0
-            feed_per_hour = capacity_kg / work_hours if work_hours > 0 else 0
-
-            tea.operating_hours = work_hours
-            process.operating_hours = work_hours
-
+            tea.operating_hours = process.operating_hours = work_hours
             for chem, frac in feed_composition.items():
-                feed.imass[chem] = feed_per_hour * frac
-
+                feed.imass[chem] = (capacity_kg / work_hours) * frac
             process.simulate()
-            earnings = tea.net_earnings
+            return tea.net_earnings
 
-        return earnings
-
-    # 3. Find exact break-even point using bisect
-    print("1. Finding exact break-even point...")
+    # 3. Find break-even point
     try:
-        sol = opt.root_scalar(
-            simulate_profit,
-            bracket=[min_scale_mt, 1976],
-            method="bisect",
-            xtol=0.1,
-        )
-        exact_be = sol.root
+        be_point = opt.root_scalar(simulate_profit, bracket=[min_scale_mt, 1976], method="bisect", xtol=0.1).root
     except ValueError:
-        exact_be = min_scale_mt
+        be_point = min_scale_mt
 
-    print(
-        f"   -> Break-even capacity (Fixed FOC Floor): {exact_be:.1f} MT/yr"
-    )
+    # All points preserved
+    low_scales = np.linspace(min_scale_mt, 250, 6)
+    high_scales = np.arange(500, max_scale_mt + 1, 250)
+    all_scales = np.unique(np.sort(np.concatenate(([be_point], low_scales, high_scales))))
 
-    # 4. Generate points for capacity curve
-    print("2. Generating simulation points...")
-    low_scales = np.linspace(min_scale_mt, 272, 6)
-    high_scales = np.linspace(445, max_scale_mt, num_high_points)
+    scale_list = [round(s, 1) for s in all_scales]
+    profit_list = [round(simulate_profit(s) / 1e6, 2) for s in all_scales]
 
-    all_scales = np.unique(
-        np.sort(np.concatenate(([exact_be], low_scales, high_scales)))
-    )
-
-    scale_mt_list = []
-    profit_mm_list = []
-
-    # 5. Sweep through capacities
-    for scale_mt in all_scales:
-        earnings = simulate_profit(scale_mt)
-        scale_mt_list.append(round(scale_mt, 1))
-        profit_mm_list.append(round(earnings / 1e6, 2))
-
-    return scale_mt_list, profit_mm_list
-
-
-
-
-
-
-
-
+    return scale_list, profit_list
 
 
 
@@ -1104,6 +1042,99 @@ def plot_profit_vs_scale():
     plt.show()
 
 
+def plot_profit_line_mechanical():
+    """
+    Plots Net Earnings vs. Capacity for Mechanical Recovery.
+    Uses multi-tiered vertical offsets for dense points (<= 250 MT) to guarantee
+    clear spacing between adjacent labels.
+    """
+    scale_list, profit_list = get_capacity_curve()
+
+    plt.figure(figsize=(12, 6.5), dpi=300)
+    ax = plt.gca()
+
+    # Plot data line & break-even reference line
+    plt.plot(
+        scale_list, 
+        profit_list, 
+        marker='o', 
+        color='#005b96', 
+        linewidth=2.5, 
+        markersize=6, 
+        label='Net Earnings'
+    )
+    plt.axhline(0, color='black', linewidth=1, linestyle='--')
+
+    # No background grid
+    ax.grid(False)
+
+    y_range = max(profit_list) - min(profit_list)
+    if y_range == 0: y_range = 1.0
+
+    # MULTI-TIERED OFFSETS (Up-Low, Down-Deep, Up-High, Down-Shallow, ...)
+    # Alternates both direction AND height to prevent horizontal label collisions
+    dense_offsets = [0.09, -0.22, 0.17, -0.11, 0.09, -0.22, 0.17]
+    low_scale_idx = 0
+
+    # Annotations
+    for x, y in zip(scale_list, profit_list):
+        text_color = '#005a00' if y >= 0 else '#8b0000'
+        
+        if x <= 250:
+            # Multi-tiered vertical callouts
+            offset = dense_offsets[low_scale_idx % len(dense_offsets)] * y_range
+            low_scale_idx += 1
+            
+            plt.annotate(
+                f"${y:.2f}M",
+                xy=(x, y),
+                xytext=(x, y + offset),
+                ha='center',
+                va='center',
+                fontsize=8,
+                fontweight='bold',
+                color=text_color,
+                arrowprops=dict(
+                    arrowstyle='-',
+                    color='gray',
+                    lw=0.8,
+                    alpha=0.7
+                )
+            )
+        else:
+            # Direct top positioning for wide 250 MT steps
+            plt.text(
+                x, 
+                y + 0.04 * y_range, 
+                f"${y:.2f}M", 
+                ha='center', 
+                va='bottom', 
+                fontsize=8.5, 
+                fontweight='bold', 
+                color=text_color
+            )
+
+    # Dynamic Y-Limits: Extra bottom padding so deep downward callout labels have ample space
+    plt.ylim(bottom=min(profit_list) - 0.32 * y_range, top=max(profit_list) + 0.14 * y_range)
+
+    # Ticks & Formatting
+    x_ticks = [0, 250, 500, 750, 1000, 1250, 1500, 1750, 2000]
+    plt.xticks(x_ticks, [f"{x:,}" for x in x_ticks], fontsize=10, fontweight='bold')
+    plt.yticks(fontsize=10, fontweight='bold')
+
+    plt.xlabel('Feedstock Capacity [Metric Tonnes / yr]', fontsize=11, fontweight='bold', labelpad=10)
+    plt.ylabel('Net Earnings [MM$ / yr]', fontsize=11, fontweight='bold', labelpad=10)
+    plt.title('Mechanical Recovery Plant Profitability vs. Scale', fontsize=13, fontweight='bold', pad=15)
+
+    # Frame styling
+    for spine in ax.spines.values():
+        spine.set_linewidth(1.5)
+        spine.set_color('black')
+
+    plt.tight_layout()
+    plt.show()
+
+
 
 
 
@@ -1137,4 +1168,8 @@ process.feeds[2].set_CF(GWP, 0.0)
 U1.ins[1].ID = 'fresh_water'
 U1.ins[1].set_CF(GWP,0.0)
 
-inventory_table = bst.report.lca_inventory_table(systems =[process],keys=GWP, items=process.products)
+#%%
+bst.PowerUtility.set_CF('GWP',0.42)
+
+
+inventory_table = bst.report.lca_inventory_table(systems =[process],keys='GWP', items=process.products)

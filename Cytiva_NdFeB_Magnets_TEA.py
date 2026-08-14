@@ -176,6 +176,59 @@ process.system.simulate()
 
 elec_price = bst.settings.electricity_price
 
+# %% Updating power
+# ==============================================================================
+# 4. INDIVIDUAL UNIT POWER ASSIGNMENTS (No Correlations)
+# ==============================================================================
+
+# Dictionary of exact, standalone power ratings (kW) per unit operation
+INDIVIDUAL_UNIT_POWER_KW = {
+    'U10': 1.06,   # Pretreatment Granulator / Shredder
+    'U3':  1.0,   # Dissolution Tank 1 Agitator
+    'T2':  0.0,   # Dissolution Holding Tank 2 Agitator
+    'T3':  0.0,   # Precipitation Tank 3 Agitator
+    'T4':  0.0,   # Holding Tank 4 Agitator
+    'P1':  0.01,   # Feed Pump 1
+    'P2':  0.3,   # Pump 2
+    'P3':  0.10,   # Solvent Pump 3
+    'U6':  1.0,   # Centrifuge 1
+    'U7':  0.0,   # Precipitator tank (in PE-film model file)
+    'U8':  4.15,   # Dewatering Centrifuge / Separation
+    'F1':  5.5,     # vacuum consistent with PE-film model file
+    'U9':  18.5,  # Screw Degasser / Primary Driver
+    'U2': 0.10,     #adsorption column
+    'Vac_S': 0.75, # Vacuum Pump Package
+    'H1':  0.15,   # Heat Exchanger 1
+    'H2':  0.10,   # Chiller Unit
+    'H3':  0.00,   # Heat Exchanger 3
+    'CT': 0.1       #cooling tower
+}
+
+def apply_strap_power_corrections():
+    """
+    Sets each unit operation's electricity consumption (kW) separately
+    using fixed, explicit ratings without any scaling correlations.
+    """
+    for unit_id, target_kw in INDIVIDUAL_UNIT_POWER_KW.items():
+        if hasattr(process, unit_id):
+            unit = getattr(process, unit_id)
+            unit.power_utility.consumption = target_kw
+
+
+def print_strap_power_summary():
+    """Prints an itemized list of electrical power draw (kW) for every unit."""
+    print("\n--- Itemized STRAP Unit Electrical Consumption (kW) ---")
+    total_kw = 0.0
+    for u in process.system.units:
+        pwr = u.power_utility.consumption
+        total_kw += pwr
+        print(f"{u.ID:>10}: {pwr:.2f} kW")
+    print("-" * 45)
+    print(f"Total Plant Electrical Draw: {total_kw:.2f} kW\n")
+
+
+
+apply_strap_power_corrections()
 #%% updating units with price based on smallest size price as in MTU
 # ------------------------------------------------------------------------------
 # DISSOLUTION & TANKS
@@ -598,18 +651,11 @@ process.tea = SimplifiedTEA(
 #%% Scale vs Profit
 import scipy.optimize as opt
 
-def get_capacity_curve(min_scale_mt=50, max_scale_mt=2000, num_high_points=8):
+def get_capacity_curve(min_scale_mt=50, max_scale_mt=2000):
     """
-    Calculates capacity vs. net earnings without requiring arguments.
-    
-    Logic for scale < 1,976 MT:
-      - Sales and VOC scale down linearly with feedstock throughput.
-      - FOC remains 100% fixed at the baseline 1,976 MT level.
-      - Taxable Income (TI) = Sales - (VOC + FOC_baseline)
-      - Net Earnings = TI * (1 - tax_rate)
+    Calculates capacity vs. net earnings using dense points for low scales (< 250 MT)
+    and clean 250 MT steps for higher scales (500 to 2000 MT).
     """
- 
-    
     # 1. Capture exact 1,976 MT baseline values
     process.set_processing_capacity(1976)
     process.system.simulate()
@@ -619,46 +665,46 @@ def get_capacity_curve(min_scale_mt=50, max_scale_mt=2000, num_high_points=8):
     baseline_foc = process.tea.FOC
     tax_rate = getattr(process.tea, 'income_tax', 0.21)
 
-    # 2. Define income statement simulator
+    # 2. Extract baseline depreciation from cash flow table
+    cashflow_df = process.tea.get_cashflow_table()
+    dep_in_usd = cashflow_df['Depreciation [MM$]'] * 1e6
+    baseline_depreciation = dep_in_usd[dep_in_usd > 0].mean()
+
+    # 3. Income statement simulator
     def simulate_profit(scale_mt):
         if scale_mt < 1976:
-            # Linear scaling for throughput-dependent revenues and variable costs
             scale_ratio = scale_mt / 1976.0
             sales = baseline_sales * scale_ratio
             voc = baseline_voc * scale_ratio
-            foc = baseline_foc  # Locked constant at the 1,976 MT floor
+            foc = baseline_foc
+            dep = baseline_depreciation
             
-            taxable_income = sales - (voc + foc)
+            taxable_income = sales - (voc + foc + dep)
             earnings = taxable_income * (1.0 - tax_rate)
         else:
-            # Standard BioSTEAM dynamic scaling for capacities >= 1,976 MT
             process.set_processing_capacity(scale_mt)
             process.system.simulate()
             earnings = process.tea.net_earnings
 
         return earnings
 
-    # 3. Find exact break-even point using bisect
-    print("1. Finding exact break-even point...")
+    # 4. Find exact break-even point
     try:
         sol = opt.root_scalar(simulate_profit, bracket=[min_scale_mt, 1976], method='bisect', xtol=0.1)
         exact_be = sol.root
     except ValueError:
         exact_be = min_scale_mt
 
-    print(f"   -> Break-even capacity (Fixed FOC Floor): {exact_be:.1f} MT/yr")
-
-    # 4. Generate points for capacity curve
-    print("2. Generating simulation points...")
-    low_scales = np.linspace(min_scale_mt, 272, 6)
-    high_scales = np.linspace(445, max_scale_mt, num_high_points)
+    # 5. Generate clean, evenly-spaced scale points
+    low_scales = np.linspace(min_scale_mt, 250, 6)
+    # Clean 250 MT step increments after 250 MT/yr
+    high_scales = np.arange(500, max_scale_mt + 1, 250)  # [500, 750, 1000, 1250, 1500, 1750, 2000]
     
     all_scales = np.unique(np.sort(np.concatenate(([exact_be], low_scales, high_scales))))
 
     scale_mt_list = []
     profit_mm_list = []
 
-    # 5. Sweep through capacities
     for scale_mt in all_scales:
         earnings = simulate_profit(scale_mt)
         scale_mt_list.append(round(scale_mt, 1))
@@ -955,6 +1001,117 @@ def plot_profit_vs_scale(scale_list=None, profit_list=None, impeller_frac=None):
     plt.tight_layout()
     plt.show()
 
+#%%plot profit vs scale line
+def plot_profit_line():
+    """
+    Plots Net Earnings vs. Scale for Cytiva STRAP Plant with multi-tiered callouts
+    for dense low-scale points (<= 250 MT) to prevent label overlap.
+    """
+    # 1. Reset baseline parameters
+    try:
+        if 'NdFeB' in globals(): process.NdFeB.price = 100.0
+        if 'feedstock' in globals(): process.feedstock.price = 0.25
+        if 'water' in globals(): process.water.price = 0.0015
+        if 'paa' in globals(): process.paa.price = 8.80
+        if 'HDPE' in globals(): process.HDPE.price = 1.20
+        if 'feedstock' in globals(): process.feedstock.F_mass = 1976000.0 / 8000.0 
+
+        if 'sys' in globals(): 
+            process.sys.simulate()
+        elif 'process' in globals() and hasattr(process, 'sys'):
+            process.sys.simulate()
+    except Exception as e:
+        print(f"Warning: Could not automatically reset system parameters: {e}")
+
+    # 2. Get capacity curve data
+    scale_list, profit_list = get_capacity_curve()
+
+    # 3. Create Line Plot
+    plt.figure(figsize=(12, 6.5), dpi=300)
+    ax = plt.gca()
+
+    # Plot data line
+    plt.plot(
+        scale_list, 
+        profit_list, 
+        marker='o', 
+        color='#005b96', 
+        linewidth=2.5, 
+        markersize=6, 
+        label='Net Earnings'
+    )
+
+    # Zero break-even reference line
+    plt.axhline(0, color='black', linewidth=1, linestyle='--')
+
+    # Remove background gridlines
+    ax.grid(False)
+
+    y_range = max(profit_list) - min(profit_list)
+    if y_range == 0: y_range = 1.0
+    
+    # MULTI-TIERED OFFSETS: Alternates direction AND height (low-up, deep-down, high-up, shallow-down)
+    # to guarantee horizontal and vertical separation between adjacent labels
+    dense_offsets = [0.09, -0.22, 0.18, -0.11, 0.09, -0.22, 0.18]
+    low_scale_idx = 0
+
+    # 4. Annotations
+    for x, y in zip(scale_list, profit_list):
+        text_color = '#005a00' if y >= 0 else '#8b0000'
+        
+        if x <= 250:
+            # Multi-tiered callouts with pointer lines for low capacities
+            offset = dense_offsets[low_scale_idx % len(dense_offsets)] * y_range
+            low_scale_idx += 1
+            
+            plt.annotate(
+                f"${y:.2f}M",
+                xy=(x, y),
+                xytext=(x, y + offset),
+                ha='center',
+                va='center',
+                fontsize=8,
+                fontweight='bold',
+                color=text_color,
+                arrowprops=dict(
+                    arrowstyle='-',
+                    color='gray',
+                    lw=0.8,
+                    alpha=0.7
+                )
+            )
+        else:
+            # Direct top annotations for neat round capacities (> 250 MT)
+            plt.text(
+                x, 
+                y + 0.04 * y_range, 
+                f"${y:.2f}M", 
+                ha='center', 
+                va='bottom', 
+                fontsize=8.5, 
+                fontweight='bold', 
+                color=text_color
+            )
+
+    # Set explicit round x-ticks
+    x_ticks = [0, 250, 500, 750, 1000, 1250, 1500, 1750, 2000]
+    plt.xticks(x_ticks, [f"{x:,}" for x in x_ticks], fontsize=10, fontweight='bold')
+    plt.yticks(fontsize=10, fontweight='bold')
+
+    # Labels and Title
+    plt.xlabel('Bioreactor Bags Feedstock [Metric Tonnes / yr]', fontsize=11, fontweight='bold', labelpad=10)
+    plt.ylabel('Net Earnings [MM$ / yr]', fontsize=11, fontweight='bold', labelpad=10)
+    plt.title('Cytiva STRAP Plant Profitability vs. Scale', fontsize=13, fontweight='bold', pad=15)
+
+    # Border spines
+    for spine in ax.spines.values():
+        spine.set_linewidth(1.5)
+        spine.set_color('black')
+
+    # Expanded bottom margin (-0.32 * y_range) to prevent deep callouts from crossing bottom frame
+    plt.ylim(bottom=min(profit_list) - 0.32 * y_range, top=max(profit_list) + 0.14 * y_range)
+    plt.tight_layout()
+    plt.show()
 
 
 

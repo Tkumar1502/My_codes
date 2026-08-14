@@ -118,6 +118,60 @@ process.system.simulate()
 process.system.diagram()
 
 
+
+# %% UPDATED POWER RATES
+# Dictionary of exact, standalone power ratings (kW) per unit operation
+INDIVIDUAL_UNIT_POWER_KW = {
+    'U10': 1.06,   # Pretreatment Granulator / Shredder
+    'U3':  1.0,   # Dissolution Tank 1 Agitator
+    'T2':  0.0,   # Dissolution Holding Tank 2 Agitator
+    'T3':  0.0,   # Precipitation Tank 3 Agitator
+    'T4':  0.0,   # Holding Tank 4 Agitator
+    'P1':  0.01,   # Feed Pump 1
+    'P2':  0.3,   # Pump 2
+    'P3':  0.10,   # Solvent Pump 3
+    'U6':  1.0,   # Centrifuge 1
+    'U7':  0.0,   # Precipitator tank (in PE-film model file)
+    'U8':  4.15,   # Dewatering Centrifuge / Separation
+    'F1':  5.5,     # vacuum consistent with PE-film model file
+    'U9':  18.5,  # Screw Degasser / Primary Driver
+    'U2': 0.10,     #adsorption column
+    'Vac_S': 0.75, # Vacuum Pump Package
+    'H1':  0.15,   # Heat Exchanger 1
+    'H2':  0.10,   # Chiller Unit
+    'H3':  0.00,   # Heat Exchanger 3
+    'CWP': 0.0,
+    'CT': 0.1       #cooling tower
+}
+
+def apply_strap_power_corrections():
+    """
+    Sets each unit operation's electricity consumption (kW) separately
+    using fixed, explicit ratings without any scaling correlations.
+    """
+    for unit_id, target_kw in INDIVIDUAL_UNIT_POWER_KW.items():
+        if hasattr(process, unit_id):
+            unit = getattr(process, unit_id)
+            unit.power_utility.consumption = target_kw
+
+
+def print_strap_power_summary():
+    """Prints an itemized list of electrical power draw (kW) for every unit."""
+    print("\n--- Itemized STRAP Unit Electrical Consumption (kW) ---")
+    total_kw = 0.0
+    for u in process.system.units:
+        pwr = u.power_utility.consumption
+        total_kw += pwr
+        print(f"{u.ID:>10}: {pwr:.2f} kW")
+    print("-" * 45)
+    print(f"Total Plant Electrical Draw: {total_kw:.2f} kW\n")
+
+
+
+apply_strap_power_corrections()
+
+
+
 #%%     LCA
 
 #%% LCA Characterizatio n###
@@ -133,6 +187,7 @@ POCP = 'POCP'
 
 
 #%%natural gas CF
+'''
 process.natural_gas.set_CF(GWP, 0.61146) # kg CO2 eq / kg NG
 process.natural_gas.set_CF(FFC,50.937, )# 51MJ/kg from EF 2.0
 process.natural_gas.set_CF(WU,0.01633, )
@@ -142,7 +197,7 @@ process.natural_gas.set_CF(ETOX, 0.02579)
 process.natural_gas.set_CF(ACD,0.00130)
 process.natural_gas.set_CF(OZD, 2.8956e-11)
 process.natural_gas.set_CF(POCP,.00124)                        
-
+'''
 #%%add CFs for xylene
 # EF 2.0; Xylene production, production mix, at plant, technology mix, 100% active substance
 # solvent vapor trap incineration: EF 2.0 Waste incineration of inert material, production mix, at consumer, waste-to-energy plant with dry flue gas treatment, including transport and pre-treatment, inert material waste
