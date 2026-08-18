@@ -16,7 +16,7 @@ from biosteam.units.decorators import cost
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.lines as mlines
-#import Cytiva_NdFeB_Magnets_TEA as cytiva
+
 
 
 
@@ -32,12 +32,17 @@ FittingsFilters = bst.Chemical('FittingsFilters', search_ID = 'Polypropylene', p
 BrownSupport = FittingsFilters.copy('BrownSupport')
 #SiliconeTubings = bst.Chemical('SiliconeTubings', search_ID = 'Polypropylene', phase = 's')
 SiliconeTubings = FittingsFilters.copy('SiliconeTubings')
+paa = bst.Chemical('PeraceticAcid')
+H2O2 = bst.Chemical('H2O2')
+
 
 bst.settings.set_thermo(
     [custom_chemicals.NdFeB,
      custom_chemicals.HDPE,
+     custom_chemicals.PeraceticAcid,
+     custom_chemicals.HydrogenPeroxide,
+     custom_chemicals.AceticAcid,
     'Water',
-    'AceticAcid',
     Films,
     FittingsFilters,
     BrownSupport,
@@ -79,7 +84,7 @@ weight_per_bag = 4
 water_per_bag = 50
 
 fresh_water_utility = bst.Stream(ID = 'Fresh_water')
-fresh_paa_utility = bst.Stream(ID = 'Peracetic Acid')
+fresh_paa_utility = bst.Stream(ID = 'Peracetic Acid (15%)')
 
 
 feed_composition = {'NdFeB': 0.1548,
@@ -134,16 +139,28 @@ class Disinfection_Unit(bst.Unit):
        total_water_makeup = hourly_purge_water + hourly_evap_water + hourly_dragout_water
         
        # 4. Disinfectant (PAA) Dosing (15% active PAA solution)
-       paa_concentration = 0.002
-       total_paa_makeup = total_water_makeup * paa_concentration * 6.67
-       water_inside_paa = total_paa_makeup * 0.85
-       dirt_flow = plastic_flow * 0.05
-        
+       stock_dilution_target = 0.01
+       commercial_paa_mass = total_water_makeup*stock_dilution_target
+       
+       
+       paa_mass = commercial_paa_mass * 0.15
+       h2o2_mass = commercial_paa_mass * 0.22
+       aa_mass = commercial_paa_mass * 0.16
+       paa_water_mass = commercial_paa_mass * 0.47
+       
+       commercial_paa_mass = total_water_makeup*stock_dilution_target
+       
+       
+       
+       dirt_flow = plastic_flow*0.05
+       
        # --- Output Streams ---
        wastewater.empty()
        wastewater.imass['Water'] = hourly_purge_water
        wastewater.imass['HDPE'] = dirt_flow 
-       wastewater.imass['AceticAcid'] = total_paa_makeup 
+       wastewater.imass['PeraceticAcid'] = paa_mass
+       wastewater.imass['HydrogenPeroxide'] = h2o2_mass
+       wastewater.imass['AceticAcid'] = aa_mass
         
        evap_loss.empty()
        evap_loss.imass['Water'] = hourly_evap_water
@@ -156,10 +173,13 @@ class Disinfection_Unit(bst.Unit):
         
        # --- Input Utilities ---
        water_in.empty()
-       water_in.imass['Water'] = total_water_makeup - water_inside_paa
+       water_in.imass['Water'] = total_water_makeup - paa_water_mass
         
        paa_in.empty()
-       paa_in.imass['AceticAcid'] = total_paa_makeup
+       paa_in.imass['PeraceticAcid'] = paa_mass
+       paa_in.imass['HydrogenPeroxide'] = h2o2_mass
+       paa_in.imass['AceticAcid'] = aa_mass
+       paa_in.imass['Water'] = paa_water_mass
 
    def _design(self):
        bags_per_hour = self.ins[0].F_mass / 4.0
@@ -501,7 +521,7 @@ class MechanicalRecyclingTEA(bst.TEA):
 #U1 = Disinfection_Unit('U1', ins = feed)
 U1 = Disinfection_Unit('U1', ins=(feed, fresh_water_utility, fresh_paa_utility), 
                        outs=('clean_rinsed_bags', 'evaporative_loss', 'sewer_effluent'))
-U2 = HandSorting_Unit('U2', ins = U1-0, N_shifts =2, N_workers = 2)
+U2 = HandSorting_Unit('U2', ins = U1-0, N_shifts =2, N_workers = 4)
 U3 = Lathe_Machine('U3', ins = U2-0,power_kw=3)
 
 S1 = bst.Splitter('S1', ins=U3.outs[0], outs = ('to Arbor press 1', 'to Arbor press B'), split=0.5)
@@ -759,6 +779,64 @@ def get_capacity_curve(min_scale_mt=50, max_scale_mt=2000):
     profit_list = [round(simulate_profit(s) / 1e6, 2) for s in all_scales]
 
     return scale_list, profit_list
+
+
+# %% best case vs worst case
+def best_case():
+    """
+    Evaluates the Mechanical plant under the most favorable (optimistic) operating conditions
+    derived from the upper/lower bounds in the sensitivity analysis tornado plot.
+    """
+    best_params = {
+        'ndfeb_conc': 0.9,          # Max magnet concentration in impeller (0.9)
+        'processing_capacity': 2965,               # Max processing capacity (2,965 tons/yr)
+        'feed_price': 0.10,        # Min feedstock purchase price ($0.10/kg)
+        'ndfeb_price': 150.0,           # Max magnet selling price ($150.00/kg)
+        'worker_salary': 40.0,          # Min worker salary ($40k/yr)
+        'freshwater_price': 0.0008,     # Min freshwater price ($0.0008/kg)
+        'peraceticacid_price': 4.40,              # Min peracetic acid price ($4.40/kg)
+        'wastewater_fee': 0.001,        # Min wastewater fee ($0.001/L)
+        'othercomponent_fee': 0.01,     # Min disposal fee ($0.01/kg)
+        'hdpe_fee': 0.01                # Min HDPE disposal fee ($0.01/kg)
+    }
+    
+    net_earnings = my_profit(**best_params)
+    irr_val = my_irr(**best_params)
+    
+    print(f"=== MECHANICAL PLANT BEST-CASE SCENARIO ===")
+    print(f"Net Earnings: ${net_earnings / 1e6:.2f} MM/yr")
+    print(f"Internal Rate of Return (IRR): {irr_val:.2f}%\n")
+    
+    return net_earnings, irr_val
+
+
+def worst_case():
+    """
+    Evaluates the Mechanical plant under the most unfavorable (pessimistic) operating conditions
+    derived from the upper/lower bounds in the sensitivity analysis tornado plot.
+    """
+    worst_params = {
+        'ndfeb_conc': 0.8,          # Min magnet concentration in impeller (0.8)
+        'processing_capacity': 990,                # Min processing capacity (990 tons/yr)
+        'feed_price': 0.50,        # Max feedstock purchase price ($0.50/kg)
+        'ndfeb_price': 50.0,            # Min magnet selling price ($50.00/kg)
+        'worker_salary': 70.0,          # Max worker salary ($70k/yr)
+        'freshwater_price': 0.002,      # Max freshwater price ($0.002/kg)
+        'peraceticacid_price': 13.20,             # Max peracetic acid price ($13.20/kg)
+        'wastewater_fee': 0.005,        # Max wastewater fee ($0.005/L)
+        'othercomponent_fee': 0.10,     # Max disposal fee ($0.10/kg)
+        'hdpe_fee': 0.10                # Max HDPE disposal fee ($0.10/kg)
+    }
+    
+    net_earnings = my_profit(**worst_params)
+    irr_val = my_irr(**worst_params)
+    
+    print(f"=== MECHANICAL PLANT WORST-CASE SCENARIO ===")
+    print(worst_params)
+    print(f"Net Earnings: ${net_earnings / 1e6:.2f} MM/yr")
+    print(f"Internal Rate of Return (IRR): {irr_val:.2f}%\n")
+    
+    return net_earnings, irr_val
 
 
 
@@ -1160,7 +1238,7 @@ POCP = 'POCP'
 
 
 #%%CFs for peracetic acid
-process.feeds[2].ID = "peracetic_acid"
+process.feeds[2].ID = "peracetic_acid (15%)"
 process.feeds[2].set_CF(GWP, 0.0)
 
 
@@ -1168,8 +1246,13 @@ process.feeds[2].set_CF(GWP, 0.0)
 U1.ins[1].ID = 'fresh_water'
 U1.ins[1].set_CF(GWP,0.0)
 
-#%%
+#%%CFs for the bioreactor bags
+process.feeds[0].ID = 'bioreactor bags'
+process.feeds[0].set_CF(GWP,0.0)
+
+#%%CF for the power
 bst.PowerUtility.set_CF('GWP',0.42)
+
 
 
 inventory_table = bst.report.lca_inventory_table(systems =[process],keys='GWP', items=process.products)

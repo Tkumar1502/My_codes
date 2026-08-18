@@ -44,8 +44,8 @@ process = strap.MagnetRecovery(
 N_operators = 1
 N_plant_manager = 1
 
-plant_manager_salary = 80000
-operator_salary = 60000
+plant_manager_salary = 110000
+operator_salary = 80000
 
 
 feed_composition = {'NdFeB': 0.1548,
@@ -467,7 +467,67 @@ def my_irr(u3_ndfeb_ratio, capacity, solvent_loss, plastic_conc,solvent_price, f
     process.system.simulate()
     return process.tea.solve_IRR()*100
 
+# %% Best case vs worst case
+def best_case_scenario():
+    """
+    Evaluates the STRAP process under the most favorable (optimistic) operating conditions
+    derived from the upper/lower bounds in the sensitivity analysis tornado plot.
+    """
+    best_params = {
+        'u3_ndfeb_ratio': 0.9,          # Max magnet concentration in impeller (0.9)
+        'capacity': 2965,               # Max processing capacity (2,965 tons/yr)
+        'solvent_loss': 0.01,           # Min solvent loss rate (1%)
+        'plastic_conc': 7.5,            # Max feed-to-solvent concentration (7.5 wt%)
+        'solvent_price': 0.10,          # Min solvent price ($0.10/kg)
+        'feedstock_price': 0.10,        # Min feedstock purchase price ($0.10/kg)
+        'NdFeB_price': 150.0,           # Max magnet selling price ($150.00/kg)
+        'HDPE_price': 1.50,             # Max HDPE selling price ($1.50/kg)
+        'freshwater_price': 0.001,      # Min freshwater price ($0.001/kg)
+        'paa_price': 4.40,              # Min peracetic acid price ($4.40/kg)
+        'wastewater_fee': 0.001,        # Min wastewater fee ($0.001/L)
+        'othercomponent_fee': 0.01      # Min disposal fee ($0.01/kg)
+    }
     
+    net_earnings = profit(**best_params)
+    irr_val = my_irr(**best_params)
+    
+    print(f"=== STRAP BEST-CASE SCENARIO ===")
+    print(f"Net Earnings: ${net_earnings / 1e6:.2f} MM/yr")
+    print(f"Internal Rate of Return (IRR): {irr_val:.2f}%\n")
+    
+    return net_earnings, irr_val
+
+
+def worst_case_scenario():
+    """
+    Evaluates the STRAP process under the most unfavorable (pessimistic) operating conditions
+    derived from the upper/lower bounds in the sensitivity analysis tornado plot.
+    """
+    worst_params = {
+        'u3_ndfeb_ratio': 0.8,          # Min magnet concentration in impeller (0.8)
+        'capacity': 990,                # Min processing capacity (990 tons/yr)
+        'solvent_loss': 1.0,            # Max solvent loss rate (100%)
+        'plastic_conc': 2.0,            # Min feed-to-solvent concentration (2.0 wt%)
+        'solvent_price': 1.60,          # Max solvent price ($1.60/kg)
+        'feedstock_price': 0.50,        # Max feedstock purchase price ($0.50/kg)
+        'NdFeB_price': 50.0,            # Min magnet selling price ($50.00/kg)
+        'HDPE_price': 1.00,             # Min HDPE selling price ($1.00/kg)
+        'freshwater_price': 0.01,       # Max freshwater price ($0.010/kg)
+        'paa_price': 13.20,             # Max peracetic acid price ($13.20/kg)
+        'wastewater_fee': 0.005,        # Max wastewater fee ($0.005/L)
+        'othercomponent_fee': 0.10      # Max disposal fee ($0.10/kg)
+    }
+    
+    net_earnings = profit(**worst_params)
+    irr_val = my_irr(**worst_params)
+    
+    print(f"=== STRAP WORST-CASE SCENARIO ===")
+    print(f"Net Earnings: ${net_earnings / 1e6:.2f} MM/yr")
+    print(f"Internal Rate of Return (IRR): {irr_val:.2f}%\n")
+    
+    return net_earnings, irr_val
+    
+
 
 
 
