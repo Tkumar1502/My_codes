@@ -35,6 +35,15 @@ SiliconeTubings = FittingsFilters.copy('SiliconeTubings')
 paa = bst.Chemical('PeraceticAcid')
 H2O2 = bst.Chemical('H2O2')
 
+NaHSO3 = bst.Chemical('NaHSO3')
+NaOH = bst.Chemical('NaOH')
+Urea = bst.Chemical('Urea')
+H3PO4 = bst.Chemical('H3PO4')
+
+
+#BiogenicResidue = bst.Chemical('BiogenicResidue', search_ID = 'Yeast', phase = 's')
+BiogenicResidue = bst.Chemical('yeast').copy('BiogenicResidue')
+#BiogenicResdue = 'l'
 
 bst.settings.set_thermo(
     [custom_chemicals.NdFeB,
@@ -46,8 +55,9 @@ bst.settings.set_thermo(
     Films,
     FittingsFilters,
     BrownSupport,
-    SiliconeTubings]
-    )
+    SiliconeTubings,
+    NaHSO3, NaOH, Urea, BiogenicResidue,H3PO4
+    ])
 
 HDPE =custom_chemicals.HDPE
 NdFeB =custom_chemicals.NdFeB
@@ -86,6 +96,9 @@ water_per_bag = 50
 fresh_water_utility = bst.Stream(ID = 'Fresh_water')
 fresh_paa_utility = bst.Stream(ID = 'Peracetic Acid (15%)')
 
+nahso3_utility = bst.Stream(ID = 'NaHSO3_utility')
+naoh_utility = bst.Stream(ID = 'NaOH_utility')
+
 
 feed_composition = {'NdFeB': 0.1548,
         'HDPE': 0.0252,
@@ -102,111 +115,195 @@ bst.settings.CEPCI = 836.9      #updated to 2025
 #%%defining units
 
 
+# =============================================================================
+# 1. DISINFECTION UNIT (QUENCH & PH CONTROL INCLUDED)
+# =============================================================================
+
 class Disinfection_Unit(bst.Unit):
-   
-   _N_ins = 3
-   _N_outs = 3
-   
-   _units = {'Volume':'m3'}
-   
-   def __init__(self, ID='', ins=None, outs=(), thermo=None, soak_time=0.5, 
-                cycles_before_dump=4, N_workers=1, N_shifts=2):
-       super().__init__(ID, ins, outs, thermo)
-       self.soak_time = soak_time
-       self.cycles_before_dump = cycles_before_dump
-       self.N_workers = N_workers
-       self.N_shifts = N_shifts
+    _N_ins = 5  # [bags_in, water_in, paa_in, nahso3_in, naoh_in]
+    _N_outs = 3 # [clean_bags_out, evap_loss, wastewater]
     
-   def _run(self):
-       bags_in, water_in, paa_in = self.ins
-       clean_bags_out, evap_loss, wastewater = self.outs
-        
-       # 1. Mass Throughput Calculations
-       plastic_flow = bags_in.F_mass 
-       bags_per_hour = plastic_flow / 4.0  
-        
-       # 2. Fluid Volume Dynamics (70 L/kg water per bag)
-       water_needed_per_hour = bags_per_hour * 70.0 
-       vessel_water_pool = water_needed_per_hour * self.soak_time 
-        
-       # 3. Water Losses & Purge Calculations
-       hourly_evap_water = 15.0 
-       hourly_dragout_water = plastic_flow * 0.1 
-        
-       time_between_dumps = self.cycles_before_dump * self.soak_time 
-       hourly_purge_water = vessel_water_pool / time_between_dumps
-        
-       total_water_makeup = hourly_purge_water + hourly_evap_water + hourly_dragout_water
-        
-       # 4. Disinfectant (PAA) Dosing (15% active PAA solution)
-       stock_dilution_target = 0.01
-       commercial_paa_mass = total_water_makeup*stock_dilution_target
-       
-       
-       paa_mass = commercial_paa_mass * 0.15
-       h2o2_mass = commercial_paa_mass * 0.22
-       aa_mass = commercial_paa_mass * 0.16
-       paa_water_mass = commercial_paa_mass * 0.47
-       
-       commercial_paa_mass = total_water_makeup*stock_dilution_target
-       
-       
-       
-       dirt_flow = plastic_flow*0.05
-       
-       # --- Output Streams ---
-       wastewater.empty()
-       wastewater.imass['Water'] = hourly_purge_water
-       wastewater.imass['HDPE'] = dirt_flow 
-       wastewater.imass['PeraceticAcid'] = paa_mass
-       wastewater.imass['HydrogenPeroxide'] = h2o2_mass
-       wastewater.imass['AceticAcid'] = aa_mass
-        
-       evap_loss.empty()
-       evap_loss.imass['Water'] = hourly_evap_water
-        
-       clean_bags_out.copy_like(bags_in)
-       for chem in ['Films', 'FittingsFilters', 'BrownSupport', 'SiliconeTubings']:
-           clean_bags_out.imass[chem] = bags_in.imass[chem] * 0.95
-        
-       clean_bags_out.imass['Water'] = hourly_dragout_water
-        
-       # --- Input Utilities ---
-       water_in.empty()
-       water_in.imass['Water'] = total_water_makeup - paa_water_mass
-        
-       paa_in.empty()
-       paa_in.imass['PeraceticAcid'] = paa_mass
-       paa_in.imass['HydrogenPeroxide'] = h2o2_mass
-       paa_in.imass['AceticAcid'] = aa_mass
-       paa_in.imass['Water'] = paa_water_mass
-
-   def _design(self):
-       bags_per_hour = self.ins[0].F_mass / 4.0
-       batch_bags = bags_per_hour * self.soak_time
-        
-       working_fluid_m3 = (batch_bags * 70.0) / 1000.0  
-       vessel_volume = working_fluid_m3 * 1.2 
-        
-       self.design_results['Vessels Required'] = 1
-       self.design_results['Volume'] = vessel_volume
-        
-       self.power_utility.rate = 0.25 * vessel_volume
-
-   @property
-   def total_salary(self):
-       worker_salary = 5e4
-       return worker_salary * self.N_shifts * self.N_workers * 1.6
+    _units = {'Volume':'m3'}
     
-   def _cost(self):
-       V = self.design_results['Volume']
+    def __init__(self, ID='', ins=None, outs=(), thermo=None, soak_time=0.5, 
+                 cycles_before_dump=4, N_workers=1, N_shifts=2):
+        super().__init__(ID, ins, outs, thermo)
+        self.soak_time = soak_time
+        self.cycles_before_dump = cycles_before_dump
+        self.N_workers = N_workers
+        self.N_shifts = N_shifts
+    
+    def _run(self):
+        bags_in, water_in, paa_in, nahso3_in, naoh_in = self.ins
+        clean_bags_out, evap_loss, wastewater = self.outs
         
-       # Base Cost (baseline = $31,000 for 4.2 m3, scaled with 0.6 exponent)
-       base_cost = 31000.0 * (V / 4.2)**0.6
+        # 1. Mass & Water Dynamics
+        plastic_flow = bags_in.F_mass 
+        vessel_water_pool = (plastic_flow / 4.0) * 70.0 * self.soak_time 
         
-       self.baseline_purchase_costs['Disinfection System'] = base_cost
-       self.purchase_costs['Disinfection System'] = base_cost
-       self.installed_costs['Disinfection System'] = base_cost * 2.0
+        hourly_evap_water = 15.0 
+        hourly_dragout_water = plastic_flow * 0.1 
+        hourly_purge_water = vessel_water_pool / (self.cycles_before_dump * self.soak_time)
+        total_water_makeup = hourly_purge_water + hourly_evap_water + hourly_dragout_water
+        
+        # 2. PAA Dosing (1% of makeup water, breaking down into 15/22/16/47 formulation)
+        comm_paa = total_water_makeup * 0.01
+        paa_mass, h2o2_mass, aa_mass, paa_water = comm_paa*0.15, comm_paa*0.22, comm_paa*0.16, comm_paa*0.47
+        
+        # 3. Quenching & Neutralization (calculated for active chemicals and carrier water)
+        active_nahso3 = (paa_mass + h2o2_mass) * 3.08
+        nahso3_water = (active_nahso3 / 0.40) - active_nahso3  # 40% commercial solution
+        
+        active_naoh = aa_mass * 4.32
+        naoh_water = (active_naoh / 0.50) - active_naoh        # 50% commercial solution
+
+        # --- Set Input Streams ---
+        nahso3_in.empty()
+        nahso3_in.imass['NaHSO3', 'Water'] = active_nahso3, nahso3_water
+
+        naoh_in.empty()
+        naoh_in.imass['NaOH', 'Water'] = active_naoh, naoh_water
+
+        water_in.empty()
+        water_in.imass['Water'] = total_water_makeup - paa_water
+        
+        paa_in.empty()
+        paa_in.imass['PeraceticAcid', 'HydrogenPeroxide', 'AceticAcid', 'Water'] = paa_mass, h2o2_mass, aa_mass, paa_water
+
+        # --- Set Output Streams ---
+        # 2% Biogenic material washed off
+        biogenic_flow = plastic_flow * 0.02
+        
+        wastewater.empty()
+        # Water = purge + carrier waters + destroyed oxidants/quench mass (to close balance)
+        wastewater.imass['Water'] = hourly_purge_water + paa_water + nahso3_water + naoh_water + paa_mass + h2o2_mass + active_nahso3 + active_naoh
+        wastewater.imass['BiogenicResidue'] = biogenic_flow
+        wastewater.imass['AceticAcid'] = aa_mass 
+        
+        evap_loss.empty()
+        evap_loss.imass['Water'] = hourly_evap_water
+        
+        clean_bags_out.copy_like(bags_in)
+        clean_bags_out.mass *= 0.98  # Reduce solid flow exactly by the 2% biogenics washed off
+        clean_bags_out.imass['Water'] = hourly_dragout_water
+
+    def _design(self):
+        batch_bags = (self.ins[0].F_mass / 4.0) * self.soak_time
+        vessel_volume = ((batch_bags * 70.0) / 1000.0) * 1.2 
+        
+        self.design_results['Vessels Required'] = 1
+        self.design_results['Volume'] = vessel_volume
+        self.power_utility.rate = 0.25 * vessel_volume
+
+    @property
+    def total_salary(self):
+        return 50000.0 * self.N_shifts * self.N_workers * 1.6
+    
+    def _cost(self):
+        V = self.design_results['Volume']
+        base_cost = 31000.0 * (V / 4.2)**0.6
+        self.purchase_costs['Disinfection System'] = base_cost + 15000.0 # Includes dosing skids
+        self.installed_costs['Disinfection System'] = self.purchase_costs['Disinfection System'] * 2.0
+
+
+# =============================================================================
+# 2. WASTEWATER TREATMENT UNITS (MBBR vs SURCHARGE)
+# =============================================================================
+
+class Municipal_Sewer(bst.Unit):
+    _N_ins = 1
+    _N_outs = 1
+    
+    def _run(self):
+        # Pass the water through the unit
+        wastewater_in = self.ins[0]
+        treated_water = self.outs[0]
+        treated_water.copy_like(wastewater_in)
+        
+    def _cost(self):
+        wastewater_in = self.ins[0]
+        
+        # 1. Calculate BOD in kg/hr
+        aa_bod = wastewater_in.imass['AceticAcid'] * 0.78
+        bio_bod = wastewater_in.imass['BiogenicResidue'] * 0.65
+        bod_kg_hr = aa_bod + bio_bod
+        
+        # 2. Convert kg/hr to lbs/hr (1 kg = 2.20462 lbs)
+        bod_lbs_hr = bod_kg_hr * 2.20462
+        
+        # 3. Calculate hourly penalty at $0.65/lb
+        # Note: Add your 250 mg/L free-limit logic here if you need to subtract it first!
+        hourly_penalty = bod_lbs_hr * 0.65
+        
+        # 4. Explicitly tell BioSTEAM's TEA to track this cost
+        self.add_OPEX = {'BOD_Surcharge': hourly_penalty}
+
+
+class MBBR_Tank(bst.Unit):
+    """If MBBR=True: Biological tank requiring Urea and Phosphoric Acid."""
+    _N_ins = 3 # [Wastewater, Urea_in, H3PO4_in]
+    _N_outs = 2 # [Clean_Water, Sludge]
+    _units = {'Volume':'m3'}
+    
+    def _run(self):
+        wastewater, urea_in, h3po4_in = self.ins
+        clean_water, sludge = self.outs
+        
+        # 1. BOD Load
+        aa_bod = wastewater.imass['AceticAcid'] * 0.78
+        bio_bod = wastewater.imass['BiogenicResidue'] * 0.65
+        self.bod_kg_hr = aa_bod + bio_bod
+        
+        # 2. Nutrient Dosing (BOD:N:P = 100:5:1)
+        # 32.5% Urea solution
+        pure_urea = (self.bod_kg_hr * 0.05) / 0.46
+        urea_water = (pure_urea / 0.325) - pure_urea
+        
+        # 75% Phosphoric Acid solution
+        pure_h3po4 = (self.bod_kg_hr * 0.01) / 0.316
+        h3po4_water = (pure_h3po4 / 0.75) - pure_h3po4
+        
+        urea_in.empty()
+        urea_in.imass['Urea', 'Water'] = pure_urea, urea_water
+        
+        h3po4_in.empty()
+        h3po4_in.imass['H3PO4', 'Water'] = pure_h3po4, h3po4_water
+        
+        # 3. Treatment Outputs
+        clean_water.empty()
+        sludge.empty()
+        
+        clean_water.imass['Water'] = wastewater.imass['Water'] + urea_water + h3po4_water
+        sludge.imass['BiogenicResidue'] = self.bod_kg_hr * 0.25
+
+    def _design(self):
+        # VOLR = 5.0 kg BOD / m3 / day = 0.208 kg BOD / m3 / hr
+        v_working = self.bod_kg_hr / 0.208
+        self.design_results['Volume'] = v_working * 1.20 # 20% freeboard
+        self.power_utility.rate = 2 # kW blower
+
+    def _cost(self):
+        V = self.design_results['Volume']
+        base_cost = 125000 * (V / 100.0)**0.6 
+        self.purchase_costs['MBBR System'] = base_cost
+        self.installed_costs['MBBR System'] = base_cost * 1.5
+
+
+# =============================================================================
+# 3. FACTORY ROUTING FUNCTION
+# =============================================================================
+
+def build_wastewater_treatment(wastewater_stream, MBBR=True):
+    if MBBR:
+        urea_feed = bst.Stream('Urea_Feed')
+        h3po4_feed = bst.Stream('H3PO4_Feed')
+        return MBBR_Tank('MBBR_System', 
+                         ins=(wastewater_stream, urea_feed, h3po4_feed), 
+                         outs=('Treated_Water', 'Bio_Sludge'))
+    else:
+        return Municipal_Sewer('Sewer_Discharge', 
+                               ins=wastewater_stream, 
+                               outs='To_Municipal_Sewer')
 
 
 class HandSorting_Unit (bst.Unit):
@@ -242,12 +339,15 @@ class HandSorting_Unit (bst.Unit):
         
     def _design(self):
         self.power_utility.rate = 0.25
-            
+        
+    
+    @property
+    def total_salary(self):
+        worker_salary = 5e4
+        return worker_salary*self.N_shifts*self.N_workers*1.6        
         
 
     def _cost(self):
-        worker_salary = 5e4
-        self.total_salary = worker_salary*self.N_shifts*self.N_workers*1.6
         self.power_utility.rate = 0.25                    
         self.baseline_purchase_costs['Conveyor'] = 15000
         self.purchase_costs['Conveyor'] = 15000
@@ -319,13 +419,17 @@ class Lathe_Machine (bst.Unit):
         
         # 2. TEA: Map out design parameters if scaling up (optional, defaults to 1)
         self.design_results['Power rating'] = self.power_kw
+    
+    @property
+    def total_salary(self):
+        worker_salary = 5e4
+        return worker_salary*self.N_shifts*self.N_workers*1.6
 
     def _cost(self):
         # 3. TEA: Define the purchase cost of the machine
         # BioSTEAM's TEA classes use this dictionary to calculate fixed capital investment (FCI)
         self.baseline_purchase_costs['Industrial Lathe'] = self.custom_purchase_cost
-        worker_salary = 5e4
-        self.total_salary = worker_salary*self.N_shifts*self.N_workers*1.6
+        
         
 
 class Arbor_Press(bst.Unit):
@@ -353,10 +457,13 @@ class Arbor_Press(bst.Unit):
         
     def _design(self):
         self.power_utility.rate = self.power_kw
-
-    def _cost(self):
+        
+    @property
+    def total_salary(self):
         worker_salary = 5e4
-        self.total_salary = worker_salary*self.N_shifts*self.N_workers*1.6
+        return worker_salary*self.N_shifts*self.N_workers*1.6
+    
+    def _cost(self):
         
         self.baseline_purchase_costs['Arbor Press'] = self.custom_purchase_cost
         self.purchase_costs['Arbor Press'] = self.custom_purchase_cost
@@ -519,8 +626,9 @@ class MechanicalRecyclingTEA(bst.TEA):
 
 #%%assigning units
 #U1 = Disinfection_Unit('U1', ins = feed)
-U1 = Disinfection_Unit('U1', ins=(feed, fresh_water_utility, fresh_paa_utility), 
-                       outs=('clean_rinsed_bags', 'evaporative_loss', 'sewer_effluent'))
+U1 = Disinfection_Unit('U1', ins=(feed, fresh_water_utility, fresh_paa_utility,
+                                  nahso3_utility, naoh_utility), 
+                       outs=('clean_rinsed_bags', 'evaporative_loss', 'disinfectant_solution'))
 U2 = HandSorting_Unit('U2', ins = U1-0, N_shifts =2, N_workers = 4)
 U3 = Lathe_Machine('U3', ins = U2-0,power_kw=3)
 
@@ -532,6 +640,10 @@ M2 = bst.Mixer('M2', ins = (U4.outs[1], U5.outs[1]), outs = 'Total Waste HDPE ca
 S2 = bst.Splitter('S2',ins=U2.outs[1],split=1)
 S2.isplit['Water']=0
 
+WM_Mixer = bst.Mixer('WM_Mixer', ins=(U1.outs[2], S2.outs[1]), 
+                     outs =  'Combined_Wastewater')
+
+WWT_System = build_wastewater_treatment(WM_Mixer.outs[0], MBBR =True)
 
 
 U1.outs[0].ID = 'sterilized bags'
@@ -544,7 +656,8 @@ U3.outs[1].ID = 'waste hdpe shavings'
 S2.outs[0].ID = 'other components'
 S2.outs[1].ID = 'wastewater'
 
-process = bst.System('mechanical_magnet_recovery', path = (U1, U2, U3,S1,U4,U5,M1,M2,S2))
+process = bst.System('mechanical_magnet_recovery', path = (U1, U2, U3,S1,U4,U5,M1,M2,S2,
+                                                           WM_Mixer, WWT_System))
 
 #products
 NdFeB_magnets = M1.outs[0]
@@ -570,6 +683,15 @@ feed.price = 0.25
 fresh_water_utility.price = 0.0015
 fresh_paa_utility.price = 8.8
 
+ 
+#price the new utilities
+nahso3_utility.price = 0.65
+naoh_utility.price = 0.75
+
+
+if isinstance(WWT_System, MBBR_Tank):
+    WWT_System.ins[1].price = 0.60      #Urea feed
+    WWT_System.ins[2].price = 0.75      #Phosphoric acid feed
 
 process.simulate()
 process.diagram()
@@ -837,6 +959,109 @@ def worst_case():
     print(f"Internal Rate of Return (IRR): {irr_val:.2f}%\n")
     
     return net_earnings, irr_val
+
+
+
+
+def simulate_and_get_profit(use_mbbr):
+    # 1. Clear flowsheet to prevent duplicate ID errors
+    bst.main_flowsheet.clear()
+    
+    # 2. Re-instantiate streams so they belong to the fresh flowsheet
+    local_feed = bst.Stream(ID='Bioreactor Bags', units='kg/hr',
+                            **{chem: feed_per_hour*frac for chem, frac in feed_composition.items()})
+    local_fresh_water = bst.Stream(ID='Fresh_water')
+    local_fresh_paa = bst.Stream(ID='Peracetic Acid (15%)')
+    local_nahso3 = bst.Stream(ID='NaHSO3_utility')
+    local_naoh = bst.Stream(ID='NaOH_utility')
+
+    # 3. Build Upstream Units
+    U1 = Disinfection_Unit('U1', ins=(local_feed, local_fresh_water, local_fresh_paa,
+                                      local_nahso3, local_naoh), 
+                           outs=('clean_rinsed_bags', 'evaporative_loss', 'disinfectant_solution'))
+    U2 = HandSorting_Unit('U2', ins=U1.outs[0], N_shifts=2, N_workers=4)
+    U3 = Lathe_Machine('U3', ins=U2.outs[0], power_kw=3)
+
+    S1 = bst.Splitter('S1', ins=U3.outs[0], outs=('to Arbor press 1', 'to Arbor press B'), split=0.5)
+    U4 = Arbor_Press('U4', S1.outs[0])
+    U5 = Arbor_Press('U5', ins=S1.outs[1])
+    M1 = bst.Mixer('M1', ins=(U4.outs[0], U5.outs[0]), outs='Total NdFeB Magnets')
+    M2 = bst.Mixer('M2', ins=(U4.outs[1], U5.outs[1]), outs='Total Waste HDPE casings')
+    S2 = bst.Splitter('S2', ins=U2.outs[1], split=1)
+    S2.isplit['Water'] = 0
+
+    WM_Mixer = bst.Mixer('WM_Mixer', ins=(U1.outs[2], S2.outs[1]), outs='Combined_Wastewater')
+
+    # 4. Build the dynamic WWT System
+    WWT_System = build_wastewater_treatment(WM_Mixer.outs[0], MBBR=use_mbbr)
+
+    # 5. Create System Model
+    temp_process = bst.System('temp_recovery_process', 
+                              path=(U1, U2, U3, S1, U4, U5, M1, M2, S2, WM_Mixer, WWT_System))
+
+    # 6. Apply Prices
+    M1.outs[0].price = 100               
+    M2.outs[0].price = -0.072            
+    U3.outs[1].price = -0.072            
+    S2.outs[0].price = -0.072            
+    U1.outs[2].price = -0.003            
+    S2.outs[1].price = -0.003            
+
+    local_feed.price = 0.25
+    local_fresh_water.price = 0.0015
+    local_fresh_paa.price = 8.8
+    local_nahso3.price = 0.65
+    local_naoh.price = 0.75
+
+    if use_mbbr:
+        WWT_System.ins[1].price = 0.60  # Urea
+        WWT_System.ins[2].price = 0.75  # Phosphoric acid
+
+    # 7. Setup Local TEA
+    total_labor_cost = U1.total_salary + U2.total_salary + U4.total_salary + U5.total_salary + U3.total_salary
+    adjusted_days = operating_hours / 24
+
+    temp_tea = MechanicalRecyclingTEA(
+        system=temp_process,
+        IRR=0.15,
+        duration=(2026, 2046),
+        depreciation='MACRS7',
+        income_tax=0.21, 
+        operating_days=adjusted_days,
+        lang_factor=None,
+        construction_schedule=(1.0,),
+        WC_over_FCI=0.25,
+        labor_cost=total_labor_cost,
+        fringe_benefits=0.4,
+        property_tax=0.001,
+        property_insurance=0.005,
+        supplies=0.05,
+        maintenance=0.03,
+        administration=0.005
+    )
+
+    # 8. Simulate and Extract Results
+    temp_process.simulate()
+    return temp_tea.net_earnings
+
+
+def compare_wwt_profits():
+    print("Simulating process WITH on-site MBBR...")
+    profit_mbbr = simulate_and_get_profit(use_mbbr=True)
+    
+    print("Simulating process WITHOUT MBBR (Sewer Surcharge)...")
+    profit_sewer = simulate_and_get_profit(use_mbbr=False)
+    
+    print("-" * 45)
+    print(f"Profit WITH MBBR:    ${profit_mbbr:,.2f} / year")
+    print(f"Profit WITHOUT MBBR: ${profit_sewer:,.2f} / year")
+    
+    return {"MBBR_Profit": profit_mbbr, "Sewer_Profit": profit_sewer}
+
+# Run the comparison
+results = compare_wwt_profits()
+
+
 
 
 
