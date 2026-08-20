@@ -39,8 +39,8 @@ NaHSO3 = bst.Chemical('NaHSO3')
 NaOH = bst.Chemical('NaOH')
 Urea = bst.Chemical('Urea')
 H3PO4 = bst.Chemical('H3PO4')
-
-
+Na2SO4 = bst.Chemical('Na2SO4')
+CH3COONa = bst.Chemical('CH3COONa')
 #BiogenicResidue = bst.Chemical('BiogenicResidue', search_ID = 'Yeast', phase = 's')
 BiogenicResidue = bst.Chemical('yeast').copy('BiogenicResidue')
 #BiogenicResdue = 'l'
@@ -56,7 +56,7 @@ bst.settings.set_thermo(
     FittingsFilters,
     BrownSupport,
     SiliconeTubings,
-    NaHSO3, NaOH, Urea, BiogenicResidue,H3PO4
+    NaHSO3, NaOH, Urea, BiogenicResidue,H3PO4, Na2SO4, CH3COONa
     ])
 
 HDPE =custom_chemicals.HDPE
@@ -96,16 +96,17 @@ water_per_bag = 50
 fresh_water_utility = bst.Stream(ID = 'Fresh_water')
 fresh_paa_utility = bst.Stream(ID = 'Peracetic Acid (15%)')
 
-nahso3_utility = bst.Stream(ID = 'NaHSO3_utility')
-naoh_utility = bst.Stream(ID = 'NaOH_utility')
+nahso3_utility = bst.Stream(ID = 'NaHSO3 (40%)')
+naoh_utility = bst.Stream(ID = 'NaOH (50%)')
 
 
 feed_composition = {'NdFeB': 0.1548,
         'HDPE': 0.0252,
         'Films': 0.10,
-        'FittingsFilters': 0.36,
+        'FittingsFilters': 0.35,
         'BrownSupport': 0.07,
-        'SiliconeTubings': 0.29
+        'SiliconeTubings': 0.28,
+        'BiogenicResidue': 0.02
         }
 
 feed = bst.Stream(ID = 'Bioreactor Bags', units = 'kg/hr',
@@ -134,7 +135,7 @@ class Disinfection_Unit(bst.Unit):
         self.N_shifts = N_shifts
     
     def _run(self):
-        bags_in, water_in, paa_in, nahso3_in, naoh_in = self.ins
+        bags_in, fresh_water, paa_in, nahso3_in, naoh_in = self.ins
         clean_bags_out, evap_loss, wastewater = self.outs
         
         # 1. Mass & Water Dynamics
@@ -146,47 +147,72 @@ class Disinfection_Unit(bst.Unit):
         hourly_purge_water = vessel_water_pool / (self.cycles_before_dump * self.soak_time)
         total_water_makeup = hourly_purge_water + hourly_evap_water + hourly_dragout_water
         
-        # 2. PAA Dosing (1% of makeup water, breaking down into 15/22/16/47 formulation)
+        # 2. Commercial PAA Dosing (15/22/16/47 formulation)
         comm_paa = total_water_makeup * 0.01
-        paa_mass, h2o2_mass, aa_mass, paa_water = comm_paa*0.15, comm_paa*0.22, comm_paa*0.16, comm_paa*0.47
+        paa_mass = comm_paa * 0.15
+        h2o2_mass = comm_paa * 0.22
+        aa_in_mass = comm_paa * 0.16
+        paa_water = comm_paa * 0.47
         
-        # 3. Quenching & Neutralization (calculated for active chemicals and carrier water)
-        active_nahso3 = (paa_mass + h2o2_mass) * 3.08
+        # 3. Quenching Stoichiometry (NaHSO3)
+        active_nahso3 = 1.368 * paa_mass + 3.059 * h2o2_mass
         nahso3_water = (active_nahso3 / 0.40) - active_nahso3  # 40% commercial solution
         
-        active_naoh = aa_mass * 4.32
+        nahso4_gen = 1.579 * paa_mass + 3.530 * h2o2_mass
+        total_aa = aa_in_mass + (0.790 * paa_mass)
+        water_from_h2o2_quench = 0.530 * h2o2_mass
+        
+        # 4. Neutralization Stoichiometry (NaOH) -> Na2SO4 and CH3COONa
+        naoh_for_nahso4 = 0.333 * nahso4_gen
+        naoh_for_aa = 0.666 * total_aa
+        active_naoh = naoh_for_nahso4 + naoh_for_aa
         naoh_water = (active_naoh / 0.50) - active_naoh        # 50% commercial solution
 
+        na2so4_gen = 1.183 * nahso4_gen
+        ch3coona_gen = 1.366 * total_aa
+        water_from_neutralization = (0.150 * nahso4_gen) + (0.300 * total_aa)
+
         # --- Set Input Streams ---
+        # Deduct water content entering from PAA, NaHSO3, and NaOH utilities
+        fresh_water.empty()
+        fresh_water.imass['Water'] = max(0.0, total_water_makeup - paa_water - nahso3_water - naoh_water)
+        
+        paa_in.empty()
+        paa_in.imass['PeraceticAcid', 'HydrogenPeroxide', 'AceticAcid', 'Water'] = (
+            paa_mass, h2o2_mass, aa_in_mass, paa_water
+        )
+
         nahso3_in.empty()
         nahso3_in.imass['NaHSO3', 'Water'] = active_nahso3, nahso3_water
 
         naoh_in.empty()
         naoh_in.imass['NaOH', 'Water'] = active_naoh, naoh_water
 
-        water_in.empty()
-        water_in.imass['Water'] = total_water_makeup - paa_water
-        
-        paa_in.empty()
-        paa_in.imass['PeraceticAcid', 'HydrogenPeroxide', 'AceticAcid', 'Water'] = paa_mass, h2o2_mass, aa_mass, paa_water
-
         # --- Set Output Streams ---
-        # 2% Biogenic material washed off
-        biogenic_flow = plastic_flow * 0.02
-        
-        wastewater.empty()
-        # Water = purge + carrier waters + destroyed oxidants/quench mass (to close balance)
-        wastewater.imass['Water'] = hourly_purge_water + paa_water + nahso3_water + naoh_water + paa_mass + h2o2_mass + active_nahso3 + active_naoh
-        wastewater.imass['BiogenicResidue'] = biogenic_flow
-        wastewater.imass['AceticAcid'] = aa_mass 
+        clean_bags_out.copy_like(bags_in)
+        clean_bags_out.imass['BiogenicResidue'] = 0.0  # Completely clean off bags
+        clean_bags_out.imass['Water'] = hourly_dragout_water
         
         evap_loss.empty()
         evap_loss.imass['Water'] = hourly_evap_water
-        
-        clean_bags_out.copy_like(bags_in)
-        clean_bags_out.mass *= 0.98  # Reduce solid flow exactly by the 2% biogenics washed off
-        clean_bags_out.imass['Water'] = hourly_dragout_water
 
+        wastewater.empty()
+        wastewater.imass['BiogenicResidue'] = bags_in.imass['BiogenicResidue']
+        wastewater.imass['Na2SO4'] = na2so4_gen
+        wastewater.imass['CH3COONa'] = ch3coona_gen
+        
+        # Closed Water Balance
+        wastewater.imass['Water'] = (
+            fresh_water.imass['Water'] +
+            paa_water + 
+            nahso3_water + 
+            naoh_water + 
+            water_from_h2o2_quench + 
+            water_from_neutralization -
+            hourly_evap_water -
+            hourly_dragout_water
+        )
+    
     def _design(self):
         batch_bags = (self.ins[0].F_mass / 4.0) * self.soak_time
         vessel_volume = ((batch_bags * 70.0) / 1000.0) * 1.2 
@@ -303,7 +329,7 @@ def build_wastewater_treatment(wastewater_stream, MBBR=True):
     else:
         return Municipal_Sewer('Sewer_Discharge', 
                                ins=wastewater_stream, 
-                               outs='To_Municipal_Sewer')
+                               outs='Wastewater (to sewer)')
 
 
 class HandSorting_Unit (bst.Unit):
@@ -643,7 +669,7 @@ S2.isplit['Water']=0
 WM_Mixer = bst.Mixer('WM_Mixer', ins=(U1.outs[2], S2.outs[1]), 
                      outs =  'Combined_Wastewater')
 
-WWT_System = build_wastewater_treatment(WM_Mixer.outs[0], MBBR =True)
+WWT_System = build_wastewater_treatment(WM_Mixer.outs[0], MBBR =False)
 
 
 U1.outs[0].ID = 'sterilized bags'
@@ -727,17 +753,21 @@ tea = MechanicalRecyclingTEA(
 
 #%%defining functions for TEA
 def my_profit(processing_capacity, ndfeb_price, ndfeb_conc, feed_price, peraceticacid_price, freshwater_price,
-              othercomponent_fee, wastewater_fee, hdpe_fee, worker_salary):
+              othercomponent_fee, wastewater_fee, hdpe_fee, worker_salary,nahso3_price, naoh_price):
     
     NdFeB_magnets.price = 0.0
     feed.price = 0.0
     fresh_paa_utility.price = 0.0
     fresh_water_utility.price = 0.0
+    naoh_utility.price = 0.0
+    nahso3_utility.price = 0.0
     other_components.price = 0.0
     HDPE_casing.price = 0.0
     HDPE_shavings.price = 0.0
     waste_water.price = 0.0
-    S2.outs[1].price = 0.0
+    WM_Mixer.outs[0].price = 0.0
+    
+   
     
     capacity = processing_capacity*1000
     NdFeB_magnets.price = ndfeb_price
@@ -750,7 +780,7 @@ def my_profit(processing_capacity, ndfeb_price, ndfeb_conc, feed_price, peraceti
     HDPE_casing.price = -hdpe_fee
     HDPE_shavings.price  = -hdpe_fee
     waste_water.price = -wastewater_fee
-    S2.outs[1].price = -wastewater_fee
+    WM_Mixer.price = -wastewater_fee
     
     #worker salary
     N_shifts = 2
@@ -775,12 +805,14 @@ def my_profit(processing_capacity, ndfeb_price, ndfeb_conc, feed_price, peraceti
     return tea.net_earnings
 
 def my_irr(processing_capacity, ndfeb_price, ndfeb_conc, feed_price, peraceticacid_price, freshwater_price,
-              othercomponent_fee, wastewater_fee, hdpe_fee, worker_salary):
+              othercomponent_fee, wastewater_fee, hdpe_fee, worker_salary, nahso3_price, naoh_price):
     
     NdFeB_magnets.price = 0.0
     feed.price = 0.0
     fresh_paa_utility.price = 0.0
     fresh_water_utility.price = 0.0
+    naoh_utility.price = 0.0
+    nahso3_utility.price = 0.0
     other_components.price = 0.0
     HDPE_casing.price = 0.0
     HDPE_shavings.price = 0.0
@@ -798,7 +830,7 @@ def my_irr(processing_capacity, ndfeb_price, ndfeb_conc, feed_price, peraceticac
     HDPE_casing.price = -hdpe_fee
     HDPE_shavings.price  = -hdpe_fee
     waste_water.price = -wastewater_fee
-    S2.outs[1].price = -wastewater_fee
+    WM_Mixer.outs[0].price = -wastewater_fee
     
     #worker salary
     N_shifts = 2
@@ -857,9 +889,54 @@ def get_capacity_curve(min_scale_mt=50, max_scale_mt=2000):
     """
     Calculates capacity vs. net earnings for Mechanical Recovery.
     Preserves ALL low-scale simulation points + break-even + 250 MT steps.
+    Includes a state reset guard to guarantee consistent baseline outputs.
     """
+    # -------------------------------------------------------------------------
+    # 0. STATE RESET GUARD: Restore original stream prices and baseline feed
+    # -------------------------------------------------------------------------
+    NdFeB_magnets.price = 100.0
+    feed.price = 0.25
+    fresh_paa_utility.price = 8.8
+    fresh_water_utility.price = 0.0015
+    nahso3_utility.price = 0.65
+    naoh_utility.price = 0.75
+    
+    # Negative priced products / disposal fees
+    HDPE_casing.price = -0.072
+    HDPE_shavings.price = -0.072
+    other_components.price = -0.072
+    waste_water.price = -0.003
+    WM_Mixer.outs[0].price = -0.003
+    
+    # Restore baseline worker salary
+    baseline_worker_salary = 50000.0
+    N_shifts = 2
+    total_workers = 6
+    tea.labor_cost = baseline_worker_salary * N_shifts * total_workers * 1.6
+    
+    # Restore baseline feed composition 
+    baseline_feed_composition = {
+        'NdFeB': 0.1548,
+        'HDPE': 0.0252,
+        'Films': 0.10,
+        'FittingsFilters': 0.35,
+        'BrownSupport': 0.07,
+        'SiliconeTubings': 0.28,
+        'BiogenicResidue': 0.02
+    }
+    
     # 1. Reset baseline (1,976 MT/yr)
-    feed.F_mass = 1976000.0 / operating_hours
+    scale_mt_yr = 1976.0
+    capacity_kg = scale_mt_yr * 1000.0
+    baseline_feed_rate = 494.0 # kg/hr equivalent for baseline operations
+    work_hours = capacity_kg / baseline_feed_rate
+    
+    tea.operating_hours = work_hours
+    process.operating_hours = work_hours
+    
+    for chem, frac in baseline_feed_composition.items():
+        feed.imass[chem] = baseline_feed_rate * frac
+        
     process.simulate()
 
     baseline_sales, baseline_voc, baseline_foc = tea.sales, tea.VOC, tea.FOC
@@ -878,11 +955,11 @@ def get_capacity_curve(min_scale_mt=50, max_scale_mt=2000):
             taxable_income = (baseline_sales * ratio) - (baseline_voc * ratio + baseline_foc + baseline_dep)
             return taxable_income * (1.0 - tax_rate)
         else:
-            capacity_kg = scale_mt * 1000.0
-            work_hours = capacity_kg / 494.0
-            tea.operating_hours = process.operating_hours = work_hours
-            for chem, frac in feed_composition.items():
-                feed.imass[chem] = (capacity_kg / work_hours) * frac
+            sim_capacity_kg = scale_mt * 1000.0
+            sim_work_hours = sim_capacity_kg / baseline_feed_rate
+            tea.operating_hours = process.operating_hours = sim_work_hours
+            for chem, frac in baseline_feed_composition.items():
+                feed.imass[chem] = baseline_feed_rate * frac
             process.simulate()
             return tea.net_earnings
 
@@ -900,7 +977,58 @@ def get_capacity_curve(min_scale_mt=50, max_scale_mt=2000):
     scale_list = [round(s, 1) for s in all_scales]
     profit_list = [round(simulate_profit(s) / 1e6, 2) for s in all_scales]
 
-    return scale_list, profit_list
+    return scale_list, profit_list, be_point
+
+def wastewater_bod_fee():
+    # Hardcoded Stream Inputs
+    flow_rate_kg_hr = WWT_System.outs[0].F_mass
+    mass_fractions = {
+        'Water': WWT_System.outs[0].imass['Water']/WWT_System.outs[0].F_mass,
+        'BiogenicResidue': WWT_System.outs[0].imass['BiogenicResidue']/WWT_System.outs[0].F_mass,
+        'Na2SO4': WWT_System.outs[0].imass['Na2SO4']/WWT_System.outs[0].F_mass,
+        'CH3COONa': WWT_System.outs[0].imass['CH3COONa']/WWT_System.outs[0].F_mass
+    }
+    
+    # Standard Rates & Factors
+    volumetric_rate = 5.01  # LASAN $/HCF
+    bod_rate = 1.02         # LASAN $/lb BOD
+    '''
+    print("Volumetric flow rate in (HCF) ", volumetric_rate)
+    print("BOD rate in lbs ", bod_rate)
+    '''
+    #BOD factors
+    fBOD_CH3COONa = 0.85
+    fBOD_BiogenicResidue = 0.65
+    
+    bod_factors = {
+        'CH3COONa': (64.0 / 82.0) * fBOD_CH3COONa,        # ~0.6632
+        'BiogenicResidue': (160.0 / 113.0) * fBOD_BiogenicResidue, # ~0.9194
+    }
+    
+    # Calculate Total BOD Mass Flow (kg/hr)
+    total_bod_kg_hr = sum(
+        flow_rate_kg_hr * frac * bod_factors.get(comp, 0.0)
+        for comp, frac in mass_fractions.items()
+    )
+    
+    # Metric Conversions
+    bod_mg_L = (total_bod_kg_hr / flow_rate_kg_hr) * 1e6
+    bod_lbs_hr = total_bod_kg_hr * 2.20462          #(1 kg = 2.20462 lbs)
+    
+    # Fee Calculations ($/hr)
+    volumetric_fee = (flow_rate_kg_hr / 2831.68) * volumetric_rate      # 1 HCF = 2831.68 kg of water
+    bod_surcharge = bod_lbs_hr * bod_rate
+    total_cost_hr = volumetric_fee + bod_surcharge
+    
+    ''' 
+    # Printed Output
+    print(f"BOD Concentration:   {bod_mg_L:.2f} mg/L")
+    print(f"BOD Mass Flow:       {bod_lbs_hr:.2f} lbs/hr")
+    print(f"Volumetric Charge:  ${volumetric_fee:.2f}/hr")
+    print(f"BOD Surcharge:      ${bod_surcharge:.2f}/hr")
+    print(f"Total Hourly Fee:   ${total_cost_hr:.2f}/hr")
+    '''
+    return bod_surcharge/flow_rate_kg_hr
 
 
 # %% best case vs worst case
@@ -919,7 +1047,9 @@ def best_case():
         'peraceticacid_price': 4.40,              # Min peracetic acid price ($4.40/kg)
         'wastewater_fee': 0.001,        # Min wastewater fee ($0.001/L)
         'othercomponent_fee': 0.01,     # Min disposal fee ($0.01/kg)
-        'hdpe_fee': 0.01                # Min HDPE disposal fee ($0.01/kg)
+        'hdpe_fee': 0.01,                # Min HDPE disposal fee ($0.01/kg)
+        'nahso3_price': 0.325,
+        'naoh_price': 0.375
     }
     
     net_earnings = my_profit(**best_params)
@@ -947,7 +1077,9 @@ def worst_case():
         'peraceticacid_price': 13.20,             # Max peracetic acid price ($13.20/kg)
         'wastewater_fee': 0.005,        # Max wastewater fee ($0.005/L)
         'othercomponent_fee': 0.10,     # Max disposal fee ($0.10/kg)
-        'hdpe_fee': 0.10                # Max HDPE disposal fee ($0.10/kg)
+        'hdpe_fee': 0.10,                # Max HDPE disposal fee ($0.10/kg)
+        'nahso3_price': 0.975,
+        'naoh_price': 1.125
     }
     
     net_earnings = my_profit(**worst_params)
@@ -1077,11 +1209,14 @@ def tornado_plot():
         "ndfeb_conc": 0.86,
         "feed_price": 0.25,
         "peraceticacid_price": 8.8,
+        "nahso3_price": 0.65,
+        "naoh_price": 0.75,
         "freshwater_price": 0.0015,
         "hdpe_fee": 0.072,
-        "wastewater_fee": 0.003,
+        "wastewater_fee": 0.003 + wastewater_bod_fee(),
         "othercomponent_fee": 0.072,
         "worker_salary": 5e4,
+        
     }
 
     ranges = {
@@ -1090,9 +1225,11 @@ def tornado_plot():
         "ndfeb_conc": (0.80, 0.90),
         "feed_price": (0.1, 0.5),
         "peraceticacid_price": (4.4, 13.2),
+        "nahso3_price": (0.325, 0.975),
+        "naoh_price": (0.375, 1.125),
         "freshwater_price": (0.0008, 0.002),
         "hdpe_fee": (0.01, 0.1),
-        "wastewater_fee": (0.001, 0.005),
+        "wastewater_fee": (0.5*(0.003 + wastewater_bod_fee()), 1.5*(0.003 + wastewater_bod_fee())),
         "othercomponent_fee": (0.01, 0.1),
         "worker_salary": (4e4, 7e4),
     }
@@ -1104,6 +1241,8 @@ def tornado_plot():
         "feed_price": "Feedstock Price ($/kg)",
         "peraceticacid_price": "Peracetic Acid Price ($/kg)",
         "freshwater_price": "Freshwater Price ($/kg)",
+        "nahso3_price": "NaHSO3 Price ($/kg)",
+        "naoh_price": "NaOH Price ($/kg)",
         "hdpe_fee": "HDPE fee",
         "wastewater_fee": "Wastewater Fee ($/L)",
         "othercomponent_fee": "Othercomponent Fee ($/kg)",
@@ -1270,7 +1409,11 @@ def plot_profit_vs_scale():
     
     
     # 1. Fetch capacity curve data internally
-    scale_mt_list, profit_list = get_capacity_curve()
+    scale_mt_list, profit_list, be_point = get_capacity_curve()
+    
+    print(f"==================================================")
+    print(f"Exact Breakeven Capacity: {be_point:.1f} Metric Tonnes/yr")
+    print(f"==================================================")
 
     impeller_frac = 1.0  # Default 100% processing scale basis
 
@@ -1351,7 +1494,11 @@ def plot_profit_line_mechanical():
     Uses multi-tiered vertical offsets for dense points (<= 250 MT) to guarantee
     clear spacing between adjacent labels.
     """
-    scale_list, profit_list = get_capacity_curve()
+    scale_list, profit_list, be_point = get_capacity_curve()
+    
+    print(f"==================================================")
+    print(f"Exact Breakeven Capacity: {be_point:.1f} Metric Tonnes/yr")
+    print(f"==================================================")
 
     plt.figure(figsize=(12, 6.5), dpi=300)
     ax = plt.gca()
@@ -1453,31 +1600,31 @@ ACD = 'ACD'
 OZD = 'OZD'
 POCP = 'POCP'
 
+#%%CFs 
 
-                       
-
-
-
-
-
-
-
-#%%CFs for peracetic acid
+# CF for peracetic acid
 process.feeds[2].ID = "peracetic_acid (15%)"
 process.feeds[2].set_CF(GWP, 0.0)
 
 
-#%%CFs for freshwater
-U1.ins[1].ID = 'fresh_water'
-U1.ins[1].set_CF(GWP,0.0)
+#CFs for freshwater
+process.feeds[1].ID = 'fresh_water'
+process.feeds[1].set_CF(GWP,0.0)
 
-#%%CFs for the bioreactor bags
+#CFs for the bioreactor bags
 process.feeds[0].ID = 'bioreactor bags'
 process.feeds[0].set_CF(GWP,0.0)
 
-#%%CF for the power
+#CF for the power
 bst.PowerUtility.set_CF('GWP',0.42)
 
+#CF for NaHSO3
+process.feeds[3].ID = "NaHSO3 (40%)"
+process.feeds[3].set_CF(GWP, 0.0)
+
+#CF for NaOH
+process.feeds[4].ID = "NaOH (50%)"
+process.feeds[4].set_CF(GWP, 0.0)
 
 
 inventory_table = bst.report.lca_inventory_table(systems =[process],keys='GWP', items=process.products)
