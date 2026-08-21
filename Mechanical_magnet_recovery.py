@@ -223,7 +223,7 @@ class Disinfection_Unit(bst.Unit):
 
     @property
     def total_salary(self):
-        return 50000.0 * self.N_shifts * self.N_workers * 1.6
+        return 70000.0 * self.N_shifts * self.N_workers * 1.6
     
     def _cost(self):
         V = self.design_results['Volume']
@@ -1028,7 +1028,7 @@ def wastewater_bod_fee():
     print(f"BOD Surcharge:      ${bod_surcharge:.2f}/hr")
     print(f"Total Hourly Fee:   ${total_cost_hr:.2f}/hr")
     '''
-    return bod_surcharge/flow_rate_kg_hr
+    return round (bod_surcharge/flow_rate_kg_hr, 3)
 
 
 # %% best case vs worst case
@@ -1229,7 +1229,8 @@ def tornado_plot():
         "naoh_price": (0.375, 1.125),
         "freshwater_price": (0.0008, 0.002),
         "hdpe_fee": (0.01, 0.1),
-        "wastewater_fee": (0.5*(0.003 + wastewater_bod_fee()), 1.5*(0.003 + wastewater_bod_fee())),
+        "wastewater_fee": (0.5*(0.003 + wastewater_bod_fee()), round(1.5 *(0.003 + wastewater_bod_fee()),3)
+                                                                     ),
         "othercomponent_fee": (0.01, 0.1),
         "worker_salary": (4e4, 7e4),
     }
