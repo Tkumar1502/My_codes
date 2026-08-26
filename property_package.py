@@ -89,8 +89,7 @@ STRAP_chemicals_outline = bst.ChemicalsOutline([
         
         
         ),
-     
- #defined as peracetic acid    
+         
      bst.ChemicalDraft(
          'AceticAcid',
          aliases = set(['AceticAcid']),
@@ -98,13 +97,65 @@ STRAP_chemicals_outline = bst.ChemicalsOutline([
          phase = 'l',
          rho = 0.5*(1.13 + 1.15),
          default = True,
-         formula = 'C2H4O3'
+         formula = 'C2H4O2'
          
          
          ),
+     
+     bst.ChemicalDraft(
+         'PeraceticAcid',
+         aliases = set(['PAA']),
+         search_db = False,
+         phase = 'l',
+         rho = 0.5*(1.13 + 1.15),
+         default = True,
+         formula = 'C2H4O3'
+         
+         ),
+     
+     bst.ChemicalDraft(
+         'HydrogenPeroxide',
+         aliases = set(['H2O2']),
+         search_db = False,
+         phase = 'l',
+         rho  = 1.45,
+         default = True,
+         formula = 'H2O2'
+         
+         
+         ),
+     bst.ChemicalDraft('NaHSO3'),
+     bst.ChemicalDraft('NaOH'),
+     bst.ChemicalDraft('CH3COONa'),
+     bst.ChemicalDraft('Na2SO4'),
+     bst.ChemicalDraft('Urea'),
+     bst.ChemicalDraft('H3PO4'),
+     
+     bst.ChemicalDraft(
+         'BiogenicResidue',
+         search_db = False,
+         default = True,
+         search_ID = 'Yeast',
+         aliases  = set(['Yeast']),
+         phase = 's'
+                       ),
+    
+     
      bst.ChemicalDraft(
          'Silcione',
          aliases =set(['SiliconeTubings']),
+         search_db = False,
+         phase = 's',
+         rho =0.5*(1100+1300),
+         default = True,
+         
+         ),
+
+
+#PETG but modeled as silicone     
+     bst.ChemicalDraft(
+         'BrownSupport',
+         aliases =set(['BrownSupport']),
          search_db = False,
          phase = 's',
          rho =0.5*(1100+1300),
@@ -163,8 +214,9 @@ STRAP_chemicals_outline = bst.ChemicalsOutline([
     #defining the feedstock components for bioreactor bags
     bst.ChemicalDraft('Films', search_ID = 'Polyethylene',phase = 's'),
     bst.ChemicalDraft('FittingsFilters', search_ID = 'Polypropylene', phase = 's'),
-    bst.ChemicalDraft('BrownSupport',search_ID = 'Polypropylene',phase='s'),
+    
     #bst.ChemicalDraft('SiliconeTubings',search_ID = 'Polypropylene',phase='s'),
+    
 ])
 
 def create_property_package():
