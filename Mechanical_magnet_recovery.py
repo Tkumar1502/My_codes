@@ -18,8 +18,6 @@ import matplotlib.patches as mpatches
 import matplotlib.lines as mlines
 
 
-
-
 filterwarnings('ignore')
 
 #from biosteam import settings
@@ -258,7 +256,6 @@ class Municipal_Sewer(bst.Unit):
         bod_lbs_hr = bod_kg_hr * 2.20462
         
         # 3. Calculate hourly penalty at $0.65/lb
-        # Note: Add your 250 mg/L free-limit logic here if you need to subtract it first!
         hourly_penalty = bod_lbs_hr * 0.65
         
         # 4. Explicitly tell BioSTEAM's TEA to track this cost
@@ -351,8 +348,6 @@ class HandSorting_Unit (bst.Unit):
         other_components.empty()
         impellers.empty()
         
-        #other_components.copy_like(OtherComponents)
-        
         impellers.imass['NdFeB'] = feed.imass['NdFeB']
         impellers.imass['HDPE']= feed.imass['HDPE']
         
@@ -439,11 +434,7 @@ class Lathe_Machine (bst.Unit):
         shavings.imass['HDPE'] = shavings_mass
         
     def _design(self):
-        # 1. TEA: Tell BioSTEAM how much electricity this unit pulls while running
-        # BioSTEAM automatically converts power (kW) * operating hours into utility costs
         self.power_utility.rate = self.power_kw 
-        
-        # 2. TEA: Map out design parameters if scaling up (optional, defaults to 1)
         self.design_results['Power rating'] = self.power_kw
     
     @property
@@ -452,8 +443,6 @@ class Lathe_Machine (bst.Unit):
         return worker_salary*self.N_shifts*self.N_workers*1.6
 
     def _cost(self):
-        # 3. TEA: Define the purchase cost of the machine
-        # BioSTEAM's TEA classes use this dictionary to calculate fixed capital investment (FCI)
         self.baseline_purchase_costs['Industrial Lathe'] = self.custom_purchase_cost
         
         
@@ -490,12 +479,9 @@ class Arbor_Press(bst.Unit):
         return worker_salary*self.N_shifts*self.N_workers*1.6
     
     def _cost(self):
-        
         self.baseline_purchase_costs['Arbor Press'] = self.custom_purchase_cost
         self.purchase_costs['Arbor Press'] = self.custom_purchase_cost
         
-
-
 
 #%%TEA parameters
 class MechanicalRecyclingTEA(bst.TEA):
@@ -521,7 +507,6 @@ class MechanicalRecyclingTEA(bst.TEA):
         self.administration = administration
         self.custom_osbl = None
         
-        
         self.osbl_itemized = {
         "1. Site Acquisition (Pre-Built Facility)": 2250000.0,
         "2. Electrical Infrastructure Upgrade": 60000.0,
@@ -532,7 +517,6 @@ class MechanicalRecyclingTEA(bst.TEA):
         "7. QC Analytical Station / Lab Space": 35000.0,
         "8. Maintenance Shop & Tool Crib": 25000.0,
     }
-    
     
     # --- Direct Costs ---
     @property
@@ -648,18 +632,15 @@ class MechanicalRecyclingTEA(bst.TEA):
         return df
 
 
-
-
 #%% assigning units
-#U1 = Disinfection_Unit('U1', ins = feed)
 U1 = Disinfection_Unit('U1', ins=(feed, fresh_water_utility, fresh_paa_utility,
                                   nahso3_utility, naoh_utility), 
                        outs=('clean_rinsed_bags', 'accidental_spills_loss', 'disinfectant_solution'))
-U2 = HandSorting_Unit('U2', ins = U1-0, N_shifts =2, N_workers = 4)
-U3 = Lathe_Machine('U3', ins = U2-0,power_kw=3)
+U2 = HandSorting_Unit('U2', ins = U1.outs[0], N_shifts =2, N_workers = 4)
+U3 = Lathe_Machine('U3', ins = U2.outs[0],power_kw=3)
 
 S1 = bst.Splitter('S1', ins=U3.outs[0], outs = ('to Arbor press 1', 'to Arbor press B'), split=0.5)
-U4 = Arbor_Press('U4', S1-0)
+U4 = Arbor_Press('U4', ins=S1.outs[0])
 U5 = Arbor_Press('U5',ins=S1.outs[1])
 M1 = bst.Mixer('M1', ins = (U4.outs[0], U5.outs[0]), outs='Total NdFeB Magnets')
 M2 = bst.Mixer('M2', ins = (U4.outs[1], U5.outs[1]), outs = 'Total Waste HDPE casings')
@@ -669,7 +650,7 @@ S2.isplit['Water']=0
 WM_Mixer = bst.Mixer('WM_Mixer', ins=(U1.outs[2], S2.outs[1]), 
                      outs =  'Combined_Wastewater')
 
-#CHECK MBBR
+#%%CHECK MBBR
 MBBR = True
 print("MBBR: ", MBBR)
 WWT_System = build_wastewater_treatment(WM_Mixer.outs[0], MBBR)
@@ -718,24 +699,11 @@ def wastewater_bod_fee(stream):
     )
     
     bod_lbs_hr = total_bod_kg_hr * 2.20462
-    volumetric_fee = (flow_rate_kg_hr / 2831.68) * volumetric_rate
     bod_surcharge = bod_lbs_hr * bod_rate
     
-    ''' 
-    # Printed Output
-    print(f"BOD Concentration:   {bod_mg_L:.2f} mg/L")
-    print(f"BOD Mass Flow:       {bod_lbs_hr:.2f} lbs/hr")
-    print(f"Volumetric Charge:  ${volumetric_fee:.2f}/hr")
-    print(f"BOD Surcharge:      ${bod_surcharge:.2f}/hr")
-    print(f"Total Hourly Fee:   ${total_cost_hr:.2f}/hr")
-    '''
     return round (bod_surcharge/flow_rate_kg_hr, 4)
 
-
-
-
 #%% inputs and outputs price
-
 process.simulate()
 process.diagram()
 
@@ -745,43 +713,33 @@ HDPE_casing = M2.outs[0]
 HDPE_shavings = U3.outs[1]
 other_components = S2.outs[0]
 
-
 #setting up prices
 NdFeB_magnets.price = 100
 HDPE_casing.price= -0.072
 HDPE_shavings.price = -0.072
 other_components.price = -0.072
           
-
-
-
 #feed stock handling and transportation
 feed.price = 0.25
-
 
 #raw materials cost
 fresh_water_utility.price = 0.0015
 fresh_paa_utility.price = 8.8
-
  
 #price the new utilities
 nahso3_utility.price = 0.65
 naoh_utility.price = 0.75
-
 
 if isinstance(WWT_System, MBBR_Tank):
     WWT_System.ins[1].price = 0.60      #Urea feed
     WWT_System.ins[2].price = 0.75      #Phosphoric acid feed
     WWT_System.outs[0].price = -0.0036  #wastewater without bod
     WWT_System.outs[1].price = -0.072   #landfilling
-
 else:
     WWT_System.outs[0].price = -(0.0036 + wastewater_bod_fee(WWT_System.outs[0])) #without mbbr
 
 #adjusted total days for 2 shifts and 250 days, to make 4000 operating_hours
 adjusted_days = operating_hours/24
-
-
 
 # handsorting=2 workers, 1 worker lathe machine, 2 workers on 2 arbor press
 total_labor_cost = U1.total_salary +  U2.total_salary + U4.total_salary + U5.total_salary + U3.total_salary
@@ -791,7 +749,7 @@ tea = MechanicalRecyclingTEA(
     IRR=0.15,
     duration=(2026, 2046),
     depreciation='MACRS7',
-    income_tax=0.21, # Previously 35% in published study
+    income_tax=0.21,
     operating_days=adjusted_days,
     lang_factor=None,
     construction_schedule=(1.0,),
@@ -805,22 +763,15 @@ tea = MechanicalRecyclingTEA(
     administration=0.005
 )
 
-
-
 #%%defining functions for TEA
 def my_profit(processing_capacity, ndfeb_price, ndfeb_conc, feed_price, peraceticacid_price, freshwater_price,
-              othercomponent_fee, wastewater_fee, hdpe_fee, worker_salary, nahso3_price, naoh_price):
+              othercomponent_fee, wastewater_fee, hdpe_fee, worker_salary, nahso3_price, naoh_price,
+              urea_price=0.60, h3po4_price=0.75):
     
-    NdFeB_magnets.price = 0.0
-    feed.price = 0.0
-    fresh_paa_utility.price = 0.0
-    fresh_water_utility.price = 0.0
-    naoh_utility.price = 0.0
-    nahso3_utility.price = 0.0
-    other_components.price = 0.0
-    HDPE_casing.price = 0.0
-    HDPE_shavings.price = 0.0
+    # 1. Clear intermediate stream prices to prevent BioSTEAM confusion
+    WM_Mixer.outs[0].price = 0.0
     
+    # 2. Apply Standard Prices
     capacity = processing_capacity * 1000
     NdFeB_magnets.price = ndfeb_price
     feed.price = feed_price
@@ -832,8 +783,18 @@ def my_profit(processing_capacity, ndfeb_price, ndfeb_conc, feed_price, peraceti
     other_components.price = -othercomponent_fee
     HDPE_casing.price = -hdpe_fee
     HDPE_shavings.price = -hdpe_fee
-    WM_Mixer.outs[0].price = -wastewater_fee
     
+    # 3. DYNAMIC WWT ROUTING FIX (Including Urea & H3PO4)
+    if isinstance(WWT_System, MBBR_Tank):
+        WWT_System.ins[1].price = urea_price
+        WWT_System.ins[2].price = h3po4_price
+        WWT_System.outs[0].price = -0.0036  # Base clean water discharge
+        WWT_System.outs[1].price = -othercomponent_fee # Sludge disposal
+    else:
+        # If no MBBR, apply the heavy wastewater surcharge
+        WWT_System.outs[0].price = -wastewater_fee
+        
+    # 4. Update Capacity and Labor
     N_shifts = 2
     tea.labor_cost = worker_salary * N_shifts * 6 * 1.6
     
@@ -842,23 +803,18 @@ def my_profit(processing_capacity, ndfeb_price, ndfeb_conc, feed_price, peraceti
     tea.operating_hours = work_hours
     process.operating_hours = work_hours
     
+    # 5. Mass Balance Update
     feed.imass['NdFeB'] = feed_per_hour * (0.18 * ndfeb_conc)
     feed.imass['HDPE'] = feed_per_hour * (0.18 * (1.0 - ndfeb_conc))
-    
     feed.imass['Films'] = feed_per_hour * 0.10
     feed.imass['FittingsFilters'] = feed_per_hour * 0.36
     feed.imass['BrownSupport'] = feed_per_hour * 0.07
     feed.imass['SiliconeTubings'] = feed_per_hour * 0.29
     
+    # Run the simulation once
     process.simulate()
-    return tea.net_earnings
-
-def my_irr(processing_capacity, ndfeb_price, ndfeb_conc, feed_price, peraceticacid_price, freshwater_price,
-           othercomponent_fee, wastewater_fee, hdpe_fee, worker_salary, nahso3_price, naoh_price):
     
-    my_profit(processing_capacity, ndfeb_price, ndfeb_conc, feed_price, peraceticacid_price, freshwater_price,
-              othercomponent_fee, wastewater_fee, hdpe_fee, worker_salary, nahso3_price, naoh_price)
-    return tea.solve_IRR() * 100
+    return tea.net_earnings
 
 
 import scipy.optimize as opt
@@ -911,7 +867,6 @@ def get_capacity_curve(min_scale_mt=50, max_scale_mt=2000):
     HDPE_casing.price = -0.072
     HDPE_shavings.price = -0.072
     other_components.price = -0.072
-    waste_water.price = -0.003
     WM_Mixer.outs[0].price = -0.003
     
     # Restore baseline worker salary
@@ -986,7 +941,6 @@ def get_capacity_curve(min_scale_mt=50, max_scale_mt=2000):
     return scale_list, profit_list, be_point
 
 
-
 # %% best case vs worst case
 def best_case():
     """
@@ -1009,7 +963,7 @@ def best_case():
     }
     
     net_earnings = my_profit(**best_params)
-    irr_val = my_irr(**best_params)
+    irr_val = tea.solve_IRR() * 100
     
     print(f"=== MECHANICAL PLANT BEST-CASE SCENARIO ===")
     print(f"Net Earnings: ${net_earnings / 1e6:.2f} MM/yr")
@@ -1039,7 +993,7 @@ def worst_case():
     }
     
     net_earnings = my_profit(**worst_params)
-    irr_val = my_irr(**worst_params)
+    irr_val = tea.solve_IRR() * 100
     
     print(f"=== MECHANICAL PLANT WORST-CASE SCENARIO ===")
     print(worst_params)
@@ -1047,8 +1001,6 @@ def worst_case():
     print(f"Internal Rate of Return (IRR): {irr_val:.2f}%\n")
     
     return net_earnings, irr_val
-
-
 
 
 def simulate_and_get_profit(use_mbbr):
@@ -1087,8 +1039,6 @@ def simulate_and_get_profit(use_mbbr):
 
     process.simulate()
     
-    
-    
     NdFeB_magnets = M1.outs[0]
     HDPE_casing = M2.outs[0] 
     HDPE_shavings = U3.outs[1]
@@ -1116,8 +1066,6 @@ def simulate_and_get_profit(use_mbbr):
     else:
         WWT_System.outs[0].price = -(0.0036 + wastewater_bod_fee(WWT_System.outs[0])) 
 
-   
-
     total_labor_cost = U1.total_salary + U2.total_salary + U4.total_salary + U5.total_salary + U3.total_salary
     adjusted_days = operating_hours / 24
 
@@ -1142,7 +1090,6 @@ def simulate_and_get_profit(use_mbbr):
 
     return tea.net_earnings
 
-
 def compare_wwt_profits(target_mbbr=MBBR):
     print("Simulating process WITH on-site MBBR...")
     profit_mbbr = simulate_and_get_profit(use_mbbr=True)
@@ -1162,13 +1109,20 @@ def compare_wwt_profits(target_mbbr=MBBR):
 results = compare_wwt_profits()
 
 
-
 #%%defining plotting functions
 def tornado_plot():
     """Runs economic sensitivity analysis and generates tornado plots for both
-
-    Net Earnings and IRR with zero required arguments.
+    Net Earnings and IRR simultaneously to save computation time.
     """
+    is_mbbr_active = isinstance(WWT_System, MBBR_Tank)
+    
+    # Fetch the correct baseline wastewater fee based on WWT configuration
+    if is_mbbr_active:
+        base_ww_fee = 0.0036
+    else:
+        base_ww_fee = 0.003 + wastewater_bod_fee(WWT_System.outs[0])
+
+    # Core parameters
     base_params = {
         "processing_capacity": 1976,
         "ndfeb_price": 100,
@@ -1179,10 +1133,9 @@ def tornado_plot():
         "naoh_price": 0.75,
         "freshwater_price": 0.0015,
         "hdpe_fee": 0.072,
-        "wastewater_fee": 0.003 + wastewater_bod_fee(WWT_System.outs[0]),
+        "wastewater_fee": base_ww_fee,
         "othercomponent_fee": 0.072,
         "worker_salary": 5e4,
-        
     }
 
     ranges = {
@@ -1195,8 +1148,7 @@ def tornado_plot():
         "naoh_price": (0.375, 1.125),
         "freshwater_price": (0.0008, 0.002),
         "hdpe_fee": (0.01, 0.1),
-        "wastewater_fee": (0.5*(0.003 + wastewater_bod_fee(WWT_System.outs[0])), 
-                           round(1.5 *(0.003 + wastewater_bod_fee(WWT_System.outs[0])),3)),
+        "wastewater_fee": (0.5 * base_ww_fee, round(1.5 * base_ww_fee, 4)),
         "othercomponent_fee": (0.01, 0.1),
         "worker_salary": (4e4, 7e4),
     }
@@ -1210,52 +1162,59 @@ def tornado_plot():
         "freshwater_price": "Freshwater Price ($/kg)",
         "nahso3_price": "NaHSO3 Price ($/kg)",
         "naoh_price": "NaOH Price ($/kg)",
-        "hdpe_fee": "HDPE fee",
+        "hdpe_fee": "HDPE Disposal Fee ($/kg)",
         "wastewater_fee": "Wastewater Fee ($/L)",
-        "othercomponent_fee": "Othercomponent Fee ($/kg)",
+        "othercomponent_fee": "Other Components Fee ($/kg)",
         "worker_salary": "Worker Salary (in k's)",
     }
+
+    # Conditionally inject Urea and H3PO4 if MBBR is true
+    if is_mbbr_active:
+        base_params["urea_price"] = 0.60
+        base_params["h3po4_price"] = 0.75
+        
+        ranges["urea_price"] = (0.30, 0.90)      # +/- 50%
+        ranges["h3po4_price"] = (0.375, 1.125)   # +/- 50%
+        
+        label_map["urea_price"] = "Urea Price ($/kg)"
+        label_map["h3po4_price"] = "H3PO4 Price ($/kg)"
 
     results = []
     results_irr = []
 
+    # Get Baseline (Simulates once, grabs both metrics)
     base_profit_m = my_profit(**base_params) / 1e6
-    base_irr_m = my_irr(**base_params)
+    base_irr_m = tea.solve_IRR() * 100
 
     for param, (low, high) in ranges.items():
+        # Test Low Bound
         p_low = base_params.copy()
         p_low[param] = low
+        low_profit_m = my_profit(**p_low) / 1e6
+        low_irr = tea.solve_IRR() * 100
+
+        # Test High Bound
         p_high = base_params.copy()
         p_high[param] = high
-
-        low_profit_m = my_profit(**p_low) / 1e6
         high_profit_m = my_profit(**p_high) / 1e6
-
-        low_irr = my_irr(**p_low)
-        high_irr = my_irr(**p_high)
+        high_irr = tea.solve_IRR() * 100
 
         display_low = low / 1000.0 if param == "worker_salary" else low
         display_high = high / 1000.0 if param == "worker_salary" else high
 
+        # Append Profit Results
         results.append((
-            label_map[param],
-            low_profit_m,
-            high_profit_m,
-            abs(high_profit_m - low_profit_m),
-            display_low,
-            display_high,
+            label_map[param], low_profit_m, high_profit_m,
+            abs(high_profit_m - low_profit_m), display_low, display_high,
         ))
-
+        
+        # Append IRR Results
         results_irr.append((
-            label_map[param],
-            low_irr,
-            high_irr,
-            abs(high_irr - low_irr),
-            display_low,
-            display_high,
+            label_map[param], low_irr, high_irr,
+            abs(high_irr - low_irr), display_low, display_high,
         ))
 
-    # Internal helper to render the bar chart
+    # Render Chart Function
     def _render_chart(data, base_val, title, x_label):
         data.sort(key=lambda x: x[3], reverse=True)
         names = [d[0] for d in data]
@@ -1264,59 +1223,29 @@ def tornado_plot():
         p_lows = [d[4] for d in data]
         p_highs = [d[5] for d in data]
 
-        plt.figure(figsize=(10, 5))
+        plt.figure(figsize=(11, 7))
+        
+        # Handle inverted metrics (e.g., lower fee = higher profit)
+        for i in range(len(names)):
+            if lows[i] < base_val:
+                plt.barh(names[i], base_val - lows[i], left=lows[i], color="red", edgecolor="black", alpha=0.8)
+                plt.barh(names[i], highs[i] - base_val, left=base_val, color="green", edgecolor="black", alpha=0.8)
+            else:
+                plt.barh(names[i], lows[i] - base_val, left=base_val, color="green", edgecolor="black", alpha=0.8)
+                plt.barh(names[i], base_val - highs[i], left=highs[i], color="red", edgecolor="black", alpha=0.8)
 
-        # Low value to baseline = red
-        plt.barh(
-            names,
-            [base_val - l for l in lows],
-            left=lows,
-            color="red",
-            edgecolor="black",
-            alpha=0.8,
-        )
-
-        # Baseline to high value = green
-        plt.barh(
-            names,
-            [h - base_val for h in highs],
-            left=[base_val] * len(names),
-            color="green",
-            edgecolor="black",
-            alpha=0.8,
-        )
-
-        plt.axvline(
-            base_val, color="blue", linestyle="--", linewidth=2.0, zorder=3
-        )
+        plt.axvline(base_val, color="blue", linestyle="--", linewidth=2.0, zorder=3)
 
         x_min, x_max = plt.xlim()
         x_gap = 0.03 * (x_max - x_min)
 
-        bars = plt.gca().patches
-        # Annotate text labels
         for i, (lo, hi) in enumerate(zip(p_lows, p_highs)):
-            y = i
-            plt.text(
-                lows[i] - x_gap,
-                y,
-                f"{lo}",
-                ha="right",
-                va="center",
-                fontsize=11,
-                fontweight="bold",
-                color="grey",
-            )
-            plt.text(
-                highs[i] + x_gap,
-                y,
-                f"{hi}",
-                ha="left",
-                va="center",
-                fontsize=11,
-                fontweight="bold",
-                color="grey",
-            )
+            if lows[i] < base_val:
+                plt.text(lows[i] - x_gap, i, f"{lo}", ha="right", va="center", fontsize=11, fontweight="bold", color="grey")
+                plt.text(highs[i] + x_gap, i, f"{hi}", ha="left", va="center", fontsize=11, fontweight="bold", color="grey")
+            else:
+                plt.text(highs[i] - x_gap, i, f"{hi}", ha="right", va="center", fontsize=11, fontweight="bold", color="grey")
+                plt.text(lows[i] + x_gap, i, f"{lo}", ha="left", va="center", fontsize=11, fontweight="bold", color="grey")
 
         all_points = lows + highs + [base_val]
         padding = (max(all_points) - min(all_points)) * 0.25
@@ -1327,53 +1256,29 @@ def tornado_plot():
         plt.xlabel(x_label, fontsize=13, fontweight="bold")
         plt.xticks(fontsize=11, fontweight="bold")
         plt.yticks(fontsize=11, fontweight="bold")
-
+        
         for spine in ax.spines.values():
             spine.set_linewidth(2)
 
-        red_patch = mpatches.Patch(color="red", label="Losing money")
-        green_patch = mpatches.Patch(color="green", label="Gaining money")
-        baseline_legend = mlines.Line2D(
-            [],
-            [],
-            color="blue",
-            linestyle="--",
-            label=f"Baseline: {base_val:.2f}",
-        )
+        red_patch = mpatches.Patch(color="red", label="Worse than Baseline")
+        green_patch = mpatches.Patch(color="green", label="Better than Baseline")
+        baseline_legend = mlines.Line2D([], [], color="blue", linestyle="--", label=f"Baseline: {base_val:.2f}")
 
-        leg = plt.legend(
-            handles=[red_patch, green_patch, baseline_legend],
-            prop={"weight": "bold", "size": 11},
-            loc="best",
-        )
+        leg = plt.legend(handles=[red_patch, green_patch, baseline_legend], prop={"weight": "bold", "size": 11}, loc="best")
         leg.get_frame().set_edgecolor("black")
         leg.get_frame().set_linewidth(2)
 
         plt.tight_layout()
         plt.show()
 
-    # Render both plots directly
-    _render_chart(
-        results,
-        base_profit_m,
-        "Mechanical Method Sensitivity: Net Earnings",
-        "Profit ($ Millions)",
-    )
-    _render_chart(
-        results_irr, base_irr_m, "Mechanical Method Sensitivity: IRR", "IRR (%)"
-    )
-
+    # Generate both plots
+    _render_chart(results, base_profit_m, "Mechanical Method Sensitivity: Net Earnings", "Profit ($ Millions)")
+    _render_chart(results_irr, base_irr_m, "Mechanical Method Sensitivity: IRR", "IRR (%)")
 
 def plot_profit_vs_scale():
     """Plots Net Earnings vs. Processing Capacity.
-
     Automatically runs get_capacity_curve() internally with zero arguments.
     """
-    # -------------------------------------------------------------------------
-    # 0. RESET GUARD: Restore original stream prices and baseline feed rate
-    # -------------------------------------------------------------------------
-    
-    
     
     # 1. Fetch capacity curve data internally
     scale_mt_list, profit_list, be_point = get_capacity_curve()
@@ -1453,7 +1358,6 @@ def plot_profit_vs_scale():
 
     plt.tight_layout()
     plt.show()
-
 
 def plot_profit_line_mechanical():
     """
@@ -1551,10 +1455,6 @@ def plot_profit_line_mechanical():
     plt.tight_layout()
     plt.show()
 
-
-
-
-
 #%%LCA
 #%% LCA Characterizatio n###
 GWP = 'GWP'
@@ -1572,7 +1472,6 @@ POCP = 'POCP'
 # CF for peracetic acid
 process.feeds[2].ID = "peracetic_acid (15%)"
 process.feeds[2].set_CF(GWP, 0.0)
-
 
 #CFs for freshwater
 process.feeds[1].ID = 'fresh_water'
@@ -1592,6 +1491,5 @@ process.feeds[3].set_CF(GWP, 0.0)
 #CF for NaOH
 process.feeds[4].ID = "NaOH (50%)"
 process.feeds[4].set_CF(GWP, 0.0)
-
 
 inventory_table = bst.report.lca_inventory_table(systems =[process],keys='GWP', items=process.products)
