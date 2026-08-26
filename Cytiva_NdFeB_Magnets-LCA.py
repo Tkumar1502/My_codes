@@ -34,7 +34,8 @@ bst.settings.CEPCI = 836.9
 process = strap.MagnetRecovery(
     processing_capacity = capacity,      #tons
     sell_leftover_plastic = True,
-    simulate=False)
+    simulate=False,
+    mbbr = False)
 
 
 feed_composition = {'NdFeB': 0.1548,

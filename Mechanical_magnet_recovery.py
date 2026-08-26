@@ -142,7 +142,7 @@ class Disinfection_Unit(bst.Unit):
         plastic_flow = bags_in.F_mass 
         vessel_water_pool = (plastic_flow / 4.0) * 70.0 * self.soak_time 
         
-        hourly_evap_water = 15.0 
+        hourly_evap_water = 5.0 
         hourly_dragout_water = plastic_flow * 0.1 
         hourly_purge_water = vessel_water_pool / (self.cycles_before_dump * self.soak_time)
         total_water_makeup = hourly_purge_water + hourly_evap_water + hourly_dragout_water
@@ -319,7 +319,7 @@ class MBBR_Tank(bst.Unit):
 # 3. FACTORY ROUTING FUNCTION
 # =============================================================================
 
-def build_wastewater_treatment(wastewater_stream, MBBR=True):
+def build_wastewater_treatment(wastewater_stream, MBBR=False):
     if MBBR:
         urea_feed = bst.Stream('Urea_Feed')
         h3po4_feed = bst.Stream('H3PO4_Feed')
@@ -650,11 +650,11 @@ class MechanicalRecyclingTEA(bst.TEA):
 
 
 
-#%%assigning units
+#%% assigning units
 #U1 = Disinfection_Unit('U1', ins = feed)
 U1 = Disinfection_Unit('U1', ins=(feed, fresh_water_utility, fresh_paa_utility,
                                   nahso3_utility, naoh_utility), 
-                       outs=('clean_rinsed_bags', 'evaporative_loss', 'disinfectant_solution'))
+                       outs=('clean_rinsed_bags', 'accidental_spills_loss', 'disinfectant_solution'))
 U2 = HandSorting_Unit('U2', ins = U1-0, N_shifts =2, N_workers = 4)
 U3 = Lathe_Machine('U3', ins = U2-0,power_kw=3)
 
@@ -669,7 +669,10 @@ S2.isplit['Water']=0
 WM_Mixer = bst.Mixer('WM_Mixer', ins=(U1.outs[2], S2.outs[1]), 
                      outs =  'Combined_Wastewater')
 
-WWT_System = build_wastewater_treatment(WM_Mixer.outs[0], MBBR =False)
+#CHECK MBBR
+MBBR = True
+print("MBBR: ", MBBR)
+WWT_System = build_wastewater_treatment(WM_Mixer.outs[0], MBBR)
 
 
 U1.outs[0].ID = 'sterilized bags'
@@ -685,20 +688,71 @@ S2.outs[1].ID = 'wastewater'
 process = bst.System('mechanical_magnet_recovery', path = (U1, U2, U3,S1,U4,U5,M1,M2,S2,
                                                            WM_Mixer, WWT_System))
 
+#%% wastewater BOD fee
+def wastewater_bod_fee(stream):
+    flow_rate_kg_hr = stream.F_mass
+    if flow_rate_kg_hr == 0:
+        return 0.0
+
+    mass_fractions = {
+        'Water': stream.imass['Water'] / flow_rate_kg_hr,
+        'BiogenicResidue': stream.imass['BiogenicResidue'] / flow_rate_kg_hr,
+        'Na2SO4': stream.imass['Na2SO4'] / flow_rate_kg_hr,
+        'CH3COONa': stream.imass['CH3COONa'] / flow_rate_kg_hr
+    }
+    
+    volumetric_rate = 10.13  # LASAN $/HCF
+    bod_rate = 1.02         # LASAN $/lb BOD
+    
+    fBOD_CH3COONa = 0.85
+    fBOD_BiogenicResidue = 0.65
+    
+    bod_factors = {
+        'CH3COONa': (64.0 / 82.0) * fBOD_CH3COONa,
+        'BiogenicResidue': (160.0 / 113.0) * fBOD_BiogenicResidue,
+    }
+    
+    total_bod_kg_hr = sum(
+        flow_rate_kg_hr * frac * bod_factors.get(comp, 0.0)
+        for comp, frac in mass_fractions.items()
+    )
+    
+    bod_lbs_hr = total_bod_kg_hr * 2.20462
+    volumetric_fee = (flow_rate_kg_hr / 2831.68) * volumetric_rate
+    bod_surcharge = bod_lbs_hr * bod_rate
+    
+    ''' 
+    # Printed Output
+    print(f"BOD Concentration:   {bod_mg_L:.2f} mg/L")
+    print(f"BOD Mass Flow:       {bod_lbs_hr:.2f} lbs/hr")
+    print(f"Volumetric Charge:  ${volumetric_fee:.2f}/hr")
+    print(f"BOD Surcharge:      ${bod_surcharge:.2f}/hr")
+    print(f"Total Hourly Fee:   ${total_cost_hr:.2f}/hr")
+    '''
+    return round (bod_surcharge/flow_rate_kg_hr, 4)
+
+
+
+
+#%% inputs and outputs price
+
+process.simulate()
+process.diagram()
+
 #products
 NdFeB_magnets = M1.outs[0]
 HDPE_casing = M2.outs[0] 
 HDPE_shavings = U3.outs[1]
 other_components = S2.outs[0]
-waste_water = U1.outs[2]
+
 
 #setting up prices
 NdFeB_magnets.price = 100
 HDPE_casing.price= -0.072
 HDPE_shavings.price = -0.072
 other_components.price = -0.072
-waste_water.price = -0.003               
-S2.outs[1].price = -0.003
+          
+
 
 
 #feed stock handling and transportation
@@ -718,9 +772,11 @@ naoh_utility.price = 0.75
 if isinstance(WWT_System, MBBR_Tank):
     WWT_System.ins[1].price = 0.60      #Urea feed
     WWT_System.ins[2].price = 0.75      #Phosphoric acid feed
+    WWT_System.outs[0].price = -0.0036  #wastewater without bod
+    WWT_System.outs[1].price = -0.072   #landfilling
 
-process.simulate()
-process.diagram()
+else:
+    WWT_System.outs[0].price = -(0.0036 + wastewater_bod_fee(WWT_System.outs[0])) #without mbbr
 
 #adjusted total days for 2 shifts and 250 days, to make 4000 operating_hours
 adjusted_days = operating_hours/24
@@ -753,58 +809,6 @@ tea = MechanicalRecyclingTEA(
 
 #%%defining functions for TEA
 def my_profit(processing_capacity, ndfeb_price, ndfeb_conc, feed_price, peraceticacid_price, freshwater_price,
-              othercomponent_fee, wastewater_fee, hdpe_fee, worker_salary,nahso3_price, naoh_price):
-    
-    NdFeB_magnets.price = 0.0
-    feed.price = 0.0
-    fresh_paa_utility.price = 0.0
-    fresh_water_utility.price = 0.0
-    naoh_utility.price = 0.0
-    nahso3_utility.price = 0.0
-    other_components.price = 0.0
-    HDPE_casing.price = 0.0
-    HDPE_shavings.price = 0.0
-    waste_water.price = 0.0
-    WM_Mixer.outs[0].price = 0.0
-    
-   
-    
-    capacity = processing_capacity*1000
-    NdFeB_magnets.price = ndfeb_price
-    feed.price = feed_price
-    fresh_paa_utility.price = peraceticacid_price
-    fresh_water_utility.price = freshwater_price
-    
-    #fee are negative priced products
-    other_components.price = -othercomponent_fee
-    HDPE_casing.price = -hdpe_fee
-    HDPE_shavings.price  = -hdpe_fee
-    waste_water.price = -wastewater_fee
-    WM_Mixer.price = -wastewater_fee
-    
-    #worker salary
-    N_shifts = 2
-    tea.labor_cost = worker_salary*N_shifts*6*1.6       #6 here are the total workers
-    
-    work_hours = capacity/ 400            #4kg per bag 100impellers/hours output
-    feed_per_hour = capacity / work_hours
-    tea.operating_hours = work_hours
-    process.operating_hours = work_hours
-    
-    
-    feed.imass['NdFeB'] = feed_per_hour * (0.18 * ndfeb_conc)
-    feed.imass['HDPE'] = feed_per_hour * (0.18 * (1.0 - ndfeb_conc))
-    
-    # Remaining baseline feedstock matrix components
-    feed.imass['Films'] = feed_per_hour * 0.10
-    feed.imass['FittingsFilters'] = feed_per_hour * 0.36
-    feed.imass['BrownSupport'] = feed_per_hour * 0.07
-    feed.imass['SiliconeTubings'] = feed_per_hour * 0.29
-    
-    process.simulate()
-    return tea.net_earnings
-
-def my_irr(processing_capacity, ndfeb_price, ndfeb_conc, feed_price, peraceticacid_price, freshwater_price,
               othercomponent_fee, wastewater_fee, hdpe_fee, worker_salary, nahso3_price, naoh_price):
     
     NdFeB_magnets.price = 0.0
@@ -816,43 +820,45 @@ def my_irr(processing_capacity, ndfeb_price, ndfeb_conc, feed_price, peraceticac
     other_components.price = 0.0
     HDPE_casing.price = 0.0
     HDPE_shavings.price = 0.0
-    waste_water.price = 0.0
-    S2.outs[1].price = 0.0
     
-    capacity = processing_capacity*1000
+    capacity = processing_capacity * 1000
     NdFeB_magnets.price = ndfeb_price
     feed.price = feed_price
     fresh_paa_utility.price = peraceticacid_price
     fresh_water_utility.price = freshwater_price
+    naoh_utility.price = naoh_price
+    nahso3_utility.price = nahso3_price
     
-    #fee are negative priced products
     other_components.price = -othercomponent_fee
     HDPE_casing.price = -hdpe_fee
-    HDPE_shavings.price  = -hdpe_fee
-    waste_water.price = -wastewater_fee
+    HDPE_shavings.price = -hdpe_fee
     WM_Mixer.outs[0].price = -wastewater_fee
     
-    #worker salary
     N_shifts = 2
-    tea.labor_cost = worker_salary*N_shifts*6*1.6       #6 here are the total workers
+    tea.labor_cost = worker_salary * N_shifts * 6 * 1.6
     
-    work_hours = capacity/ 400            #4kg per bag 100impellers/hours output
+    work_hours = capacity / 400
     feed_per_hour = capacity / work_hours
     tea.operating_hours = work_hours
     process.operating_hours = work_hours
     
-    
     feed.imass['NdFeB'] = feed_per_hour * (0.18 * ndfeb_conc)
     feed.imass['HDPE'] = feed_per_hour * (0.18 * (1.0 - ndfeb_conc))
     
-    # Remaining baseline feedstock matrix components
     feed.imass['Films'] = feed_per_hour * 0.10
     feed.imass['FittingsFilters'] = feed_per_hour * 0.36
     feed.imass['BrownSupport'] = feed_per_hour * 0.07
     feed.imass['SiliconeTubings'] = feed_per_hour * 0.29
     
     process.simulate()
-    return tea.solve_IRR()*100
+    return tea.net_earnings
+
+def my_irr(processing_capacity, ndfeb_price, ndfeb_conc, feed_price, peraceticacid_price, freshwater_price,
+           othercomponent_fee, wastewater_fee, hdpe_fee, worker_salary, nahso3_price, naoh_price):
+    
+    my_profit(processing_capacity, ndfeb_price, ndfeb_conc, feed_price, peraceticacid_price, freshwater_price,
+              othercomponent_fee, wastewater_fee, hdpe_fee, worker_salary, nahso3_price, naoh_price)
+    return tea.solve_IRR() * 100
 
 
 import scipy.optimize as opt
@@ -979,56 +985,6 @@ def get_capacity_curve(min_scale_mt=50, max_scale_mt=2000):
 
     return scale_list, profit_list, be_point
 
-def wastewater_bod_fee():
-    # Hardcoded Stream Inputs
-    flow_rate_kg_hr = WWT_System.outs[0].F_mass
-    mass_fractions = {
-        'Water': WWT_System.outs[0].imass['Water']/WWT_System.outs[0].F_mass,
-        'BiogenicResidue': WWT_System.outs[0].imass['BiogenicResidue']/WWT_System.outs[0].F_mass,
-        'Na2SO4': WWT_System.outs[0].imass['Na2SO4']/WWT_System.outs[0].F_mass,
-        'CH3COONa': WWT_System.outs[0].imass['CH3COONa']/WWT_System.outs[0].F_mass
-    }
-    
-    # Standard Rates & Factors
-    volumetric_rate = 5.01  # LASAN $/HCF
-    bod_rate = 1.02         # LASAN $/lb BOD
-    '''
-    print("Volumetric flow rate in (HCF) ", volumetric_rate)
-    print("BOD rate in lbs ", bod_rate)
-    '''
-    #BOD factors
-    fBOD_CH3COONa = 0.85
-    fBOD_BiogenicResidue = 0.65
-    
-    bod_factors = {
-        'CH3COONa': (64.0 / 82.0) * fBOD_CH3COONa,        # ~0.6632
-        'BiogenicResidue': (160.0 / 113.0) * fBOD_BiogenicResidue, # ~0.9194
-    }
-    
-    # Calculate Total BOD Mass Flow (kg/hr)
-    total_bod_kg_hr = sum(
-        flow_rate_kg_hr * frac * bod_factors.get(comp, 0.0)
-        for comp, frac in mass_fractions.items()
-    )
-    
-    # Metric Conversions
-    bod_mg_L = (total_bod_kg_hr / flow_rate_kg_hr) * 1e6
-    bod_lbs_hr = total_bod_kg_hr * 2.20462          #(1 kg = 2.20462 lbs)
-    
-    # Fee Calculations ($/hr)
-    volumetric_fee = (flow_rate_kg_hr / 2831.68) * volumetric_rate      # 1 HCF = 2831.68 kg of water
-    bod_surcharge = bod_lbs_hr * bod_rate
-    total_cost_hr = volumetric_fee + bod_surcharge
-    
-    ''' 
-    # Printed Output
-    print(f"BOD Concentration:   {bod_mg_L:.2f} mg/L")
-    print(f"BOD Mass Flow:       {bod_lbs_hr:.2f} lbs/hr")
-    print(f"Volumetric Charge:  ${volumetric_fee:.2f}/hr")
-    print(f"BOD Surcharge:      ${bod_surcharge:.2f}/hr")
-    print(f"Total Hourly Fee:   ${total_cost_hr:.2f}/hr")
-    '''
-    return round (bod_surcharge/flow_rate_kg_hr, 3)
 
 
 # %% best case vs worst case
@@ -1096,21 +1052,22 @@ def worst_case():
 
 
 def simulate_and_get_profit(use_mbbr):
-    # 1. Clear flowsheet to prevent duplicate ID errors
+    global process, tea, WWT_System, WM_Mixer, U1, U2, U3, S1, U4, U5, M1, M2, S2, feed
+    global fresh_water_utility, fresh_paa_utility, nahso3_utility, naoh_utility
+    global NdFeB_magnets, HDPE_casing, HDPE_shavings, other_components
+
     bst.main_flowsheet.clear()
     
-    # 2. Re-instantiate streams so they belong to the fresh flowsheet
-    local_feed = bst.Stream(ID='Bioreactor Bags', units='kg/hr',
-                            **{chem: feed_per_hour*frac for chem, frac in feed_composition.items()})
-    local_fresh_water = bst.Stream(ID='Fresh_water')
-    local_fresh_paa = bst.Stream(ID='Peracetic Acid (15%)')
-    local_nahso3 = bst.Stream(ID='NaHSO3_utility')
-    local_naoh = bst.Stream(ID='NaOH_utility')
+    feed = bst.Stream(ID='Bioreactor Bags', units='kg/hr',
+                       **{chem: feed_per_hour * frac for chem, frac in feed_composition.items()})
+    fresh_water_utility = bst.Stream(ID='Fresh_water')
+    fresh_paa_utility = bst.Stream(ID='Peracetic Acid (15%)')
+    nahso3_utility = bst.Stream(ID='NaHSO3_utility')
+    naoh_utility = bst.Stream(ID='NaOH_utility')
 
-    # 3. Build Upstream Units
-    U1 = Disinfection_Unit('U1', ins=(local_feed, local_fresh_water, local_fresh_paa,
-                                      local_nahso3, local_naoh), 
-                           outs=('clean_rinsed_bags', 'evaporative_loss', 'disinfectant_solution'))
+    U1 = Disinfection_Unit('U1', ins=(feed, fresh_water_utility, fresh_paa_utility,
+                                      nahso3_utility, naoh_utility), 
+                           outs=('clean_rinsed_bags', 'accidental_spill_loss', 'disinfectant_solution'))
     U2 = HandSorting_Unit('U2', ins=U1.outs[0], N_shifts=2, N_workers=4)
     U3 = Lathe_Machine('U3', ins=U2.outs[0], power_kw=3)
 
@@ -1123,38 +1080,49 @@ def simulate_and_get_profit(use_mbbr):
     S2.isplit['Water'] = 0
 
     WM_Mixer = bst.Mixer('WM_Mixer', ins=(U1.outs[2], S2.outs[1]), outs='Combined_Wastewater')
-
-    # 4. Build the dynamic WWT System
     WWT_System = build_wastewater_treatment(WM_Mixer.outs[0], MBBR=use_mbbr)
 
-    # 5. Create System Model
-    temp_process = bst.System('temp_recovery_process', 
-                              path=(U1, U2, U3, S1, U4, U5, M1, M2, S2, WM_Mixer, WWT_System))
+    process = bst.System('mechanical_magnet_recovery', 
+                         path=(U1, U2, U3, S1, U4, U5, M1, M2, S2, WM_Mixer, WWT_System))
 
-    # 6. Apply Prices
-    M1.outs[0].price = 100               
-    M2.outs[0].price = -0.072            
-    U3.outs[1].price = -0.072            
-    S2.outs[0].price = -0.072            
-    U1.outs[2].price = -0.003            
-    S2.outs[1].price = -0.003            
+    process.simulate()
+    
+    
+    
+    NdFeB_magnets = M1.outs[0]
+    HDPE_casing = M2.outs[0] 
+    HDPE_shavings = U3.outs[1]
+    other_components = S2.outs[0]
+    
+    U3.outs[1].ID = 'Waste_HDPE_shavings'
+    S2.outs[0].ID = 'Other_components'
+    
+    NdFeB_magnets.price = 100               
+    HDPE_casing.price = -0.072            
+    HDPE_shavings.price = -0.072            
+    other_components.price = -0.072            
 
-    local_feed.price = 0.25
-    local_fresh_water.price = 0.0015
-    local_fresh_paa.price = 8.8
-    local_nahso3.price = 0.65
-    local_naoh.price = 0.75
+    feed.price = 0.25
+    fresh_water_utility.price = 0.0015
+    fresh_paa_utility.price = 8.8
+    nahso3_utility.price = 0.65
+    naoh_utility.price = 0.75
 
     if use_mbbr:
-        WWT_System.ins[1].price = 0.60  # Urea
-        WWT_System.ins[2].price = 0.75  # Phosphoric acid
+        WWT_System.ins[1].price = 0.60
+        WWT_System.ins[2].price = 0.75
+        WWT_System.outs[0].price = -0.0036
+        WWT_System.outs[1].price = -0.072
+    else:
+        WWT_System.outs[0].price = -(0.0036 + wastewater_bod_fee(WWT_System.outs[0])) 
 
-    # 7. Setup Local TEA
+   
+
     total_labor_cost = U1.total_salary + U2.total_salary + U4.total_salary + U5.total_salary + U3.total_salary
     adjusted_days = operating_hours / 24
 
-    temp_tea = MechanicalRecyclingTEA(
-        system=temp_process,
+    tea = MechanicalRecyclingTEA(
+        system=process,
         IRR=0.15,
         duration=(2026, 2046),
         depreciation='MACRS7',
@@ -1172,28 +1140,26 @@ def simulate_and_get_profit(use_mbbr):
         administration=0.005
     )
 
-    # 8. Simulate and Extract Results
-    temp_process.simulate()
-    return temp_tea.net_earnings
+    return tea.net_earnings
 
 
-def compare_wwt_profits():
+def compare_wwt_profits(target_mbbr=MBBR):
     print("Simulating process WITH on-site MBBR...")
     profit_mbbr = simulate_and_get_profit(use_mbbr=True)
     
     print("Simulating process WITHOUT MBBR (Sewer Surcharge)...")
     profit_sewer = simulate_and_get_profit(use_mbbr=False)
     
+    # Finalize state according to user target setting
+    simulate_and_get_profit(use_mbbr=target_mbbr)
+
     print("-" * 45)
-    print(f"Profit WITH MBBR:    ${profit_mbbr:,.2f} / year")
-    print(f"Profit WITHOUT MBBR: ${profit_sewer:,.2f} / year")
+    print(f"Profit WITH MBBR:    ${profit_mbbr / 1e6:,.2f} / year")
+    print(f"Profit WITHOUT MBBR: ${profit_sewer / 1e6:,.2f} / year")
     
     return {"MBBR_Profit": profit_mbbr, "Sewer_Profit": profit_sewer}
 
-# Run the comparison
 results = compare_wwt_profits()
-
-
 
 
 
@@ -1213,7 +1179,7 @@ def tornado_plot():
         "naoh_price": 0.75,
         "freshwater_price": 0.0015,
         "hdpe_fee": 0.072,
-        "wastewater_fee": 0.003 + wastewater_bod_fee(),
+        "wastewater_fee": 0.003 + wastewater_bod_fee(WWT_System.outs[0]),
         "othercomponent_fee": 0.072,
         "worker_salary": 5e4,
         
@@ -1229,8 +1195,8 @@ def tornado_plot():
         "naoh_price": (0.375, 1.125),
         "freshwater_price": (0.0008, 0.002),
         "hdpe_fee": (0.01, 0.1),
-        "wastewater_fee": (0.5*(0.003 + wastewater_bod_fee()), round(1.5 *(0.003 + wastewater_bod_fee()),3)
-                                                                     ),
+        "wastewater_fee": (0.5*(0.003 + wastewater_bod_fee(WWT_System.outs[0])), 
+                           round(1.5 *(0.003 + wastewater_bod_fee(WWT_System.outs[0])),3)),
         "othercomponent_fee": (0.01, 0.1),
         "worker_salary": (4e4, 7e4),
     }
