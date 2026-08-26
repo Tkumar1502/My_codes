@@ -23,7 +23,7 @@ original_u7_design = strap.units.Precipitator._design
 # =============================================================================
 #%% CHECK MBBR
 # BRAND NEW VARIABLE: Overcomes IDE caching issues
-ENABLE_MBBR_WWT = True     # True = On-site MBBR WWT; False = Municipal sewer discharge
+ENABLE_MBBR_WWT = False     # True = On-site MBBR WWT; False = Municipal sewer discharge
 print("MBBR Enabled:", ENABLE_MBBR_WWT)
 
 capacity = 1976           # MT/yr feedstock capacity
@@ -411,9 +411,11 @@ def profit(u3_ndfeb_ratio, capacity, solvent_loss, plastic_conc, solvent_price, 
     feedstock.imass['NdFeB'] = feed_per_hour * (0.18 * u3_ndfeb_ratio)
     feedstock.imass['HDPE'] = feed_per_hour * (0.18 * (1.0 - u3_ndfeb_ratio))
     feedstock.imass['Films'] = feed_per_hour * 0.10
-    feedstock.imass['FittingsFilters'] = feed_per_hour * 0.36
+    feedstock.imass['FittingsFilters'] = feed_per_hour * 0.35
     feedstock.imass['BrownSupport'] = feed_per_hour * 0.07
-    feedstock.imass['SiliconeTubings'] = feed_per_hour * 0.29
+    feedstock.imass['SiliconeTubings'] = feed_per_hour * 0.28
+    feedstock.imass['Solutes'] = feed_per_hour * 0.001
+    feedstock.imass['BiogenicResidue'] = feed_per_hour * 0.02
 
     process.system.simulate()
     return process.tea.net_earnings
@@ -423,7 +425,7 @@ def tornado_plot():
     base_params = {
         'u3_ndfeb_ratio': 0.86, 'capacity': 1976, 'solvent_loss': 0.1, 'plastic_conc': 5.0, 
         'solvent_price': 0.85, 'feedstock_price': 0.25, 'NdFeB_price': 100, 'HDPE_price': 1.20,
-        'freshwater_price': 0.002, 'wastewater_fee': 0.0036 + wastewater_bod_fee(), 
+        'freshwater_price': 0.0015, 'wastewater_fee': 0.0036 + wastewater_bod_fee(), 
         'paa_price': 8.8, 'othercomponent_fee': 0.072,
         'naoh_price': 0.75, 'nahso3_price': 0.65
     }
@@ -603,7 +605,7 @@ def plot_it(data, base_val, title, x_label, color):
     lows, highs = [d[1] for d in data], [d[2] for d in data]
     p_lows, p_highs = [d[4] for d in data], [d[5] for d in data]
     
-    plt.figure(figsize=(10, 5))
+    plt.figure(figsize=(10, 7), dpi=300)
     widths = [h - l for h, l in zip(highs, lows)]
     
     bars = plt.barh(names, widths, left=lows, color=color, edgecolor='black', alpha=0.8)
@@ -611,31 +613,52 @@ def plot_it(data, base_val, title, x_label, color):
     plt.barh(names, [h - base_val for h in highs], left=[base_val] * len(names), color='green', edgecolor='black', alpha=0.8)
     plt.axvline(base_val, color='blue', linestyle='--', linewidth=2.0, zorder=3)
     
-    x_min, x_max = plt.xlim()
-    x_gap = 0.03 * (x_max - x_min)
+    # Calculate initial x-span bounds
+    all_points = lows + highs + [base_val]
+    val_range = max(all_points) - min(all_points)
+    
+    # Minimum offset from baseline for zero/tiny bars (7% of range)
+    min_clearance = 0.03 * val_range 
+    x_gap = 0.02 * val_range
+    label_font_size = 10
+
+    # Set x-axis limits ensuring small-bar labels aren't clipped
+    x_min_val = min(min(lows), base_val - min_clearance) - (0.15 * val_range)
+    x_max_val = max(max(highs), base_val + min_clearance) + (0.15 * val_range)
+    plt.xlim(x_min_val, x_max_val)
+
     for bar, lo, hi in zip(bars, p_lows, p_highs):
         y = bar.get_y() + bar.get_height() / 2
-        plt.text(bar.get_x() - x_gap, y, f'{lo}', ha='right', va='center', fontsize=12, fontweight='bold', color='grey')
-        plt.text(bar.get_x() + bar.get_width() + x_gap, y, f'{hi}', ha='left', va='center', fontsize=12, fontweight='bold', color='grey')
+        bar_left = bar.get_x()
+        bar_right = bar.get_x() + bar.get_width()
+        
+        # Enforce minimum distance from center line so thin bars don't collapse text inward
+        left_pos = min(bar_left - x_gap, base_val - min_clearance)
+        right_pos = max(bar_right + x_gap, base_val + min_clearance)
+        
+        plt.text(left_pos, y, f'{lo}', ha='right', va='center', 
+                 fontsize=label_font_size, fontweight='bold', color='#333333')
+        plt.text(right_pos, y, f'{hi}', ha='left', va='center', 
+                 fontsize=label_font_size, fontweight='bold', color='#333333')
 
-    all_points = lows + highs + [base_val]
-    padding = (max(all_points) - min(all_points)) * 0.25
-    plt.xlim(min(all_points) - padding, max(all_points) + padding)
     ax = plt.gca()
-    ax.set_title(f'Cytiva STRAP {title}', fontsize=16, fontweight='bold', pad=15)
-    plt.xlabel(x_label, fontsize=14, fontweight='bold')
-    plt.xticks(fontsize=12, fontweight='bold')
-    plt.yticks(fontsize=12, fontweight='bold')
+    ax.set_title(f'Cytiva STRAP {title}', fontsize=15, fontweight='bold', pad=15)
+    plt.xlabel(x_label, fontsize=12, fontweight='bold')
+    plt.xticks(fontsize=11, fontweight='bold')
+    plt.yticks(fontsize=10, fontweight='bold')
     plt.grid(False)
     
-    for spine in ax.spines.values(): spine.set_linewidth(2)
+    for spine in ax.spines.values(): 
+        spine.set_linewidth(1.8)
+        
     red_patch = mpatches.Patch(color='red', label='Losing money')
     green_patch = mpatches.Patch(color='green', label='Gaining money')
-    baseline_legend = mlines.Line2D([], [], color='black', linestyle='--', label=f'Baseline: {base_val:.2f}')
+    baseline_legend = mlines.Line2D([], [], color='blue', linestyle='--', linewidth=2.0, label=f'Baseline: {base_val:.2f}')
     
-    leg = plt.legend(handles=[red_patch, green_patch, baseline_legend], loc='best')
+    leg = plt.legend(handles=[red_patch, green_patch, baseline_legend], loc='upper right', fontsize=9.5)
     leg.get_frame().set_edgecolor('black')
-    leg.get_frame().set_linewidth(2)
+    leg.get_frame().set_linewidth(1.5)
+    
     plt.tight_layout()
     plt.show()
 
@@ -746,3 +769,4 @@ def itemized_cost():
 # 7. INITIALIZE BASELINE MODEL
 # =============================================================================
 build_process(mbbr_flag=ENABLE_MBBR_WWT, proc_capacity=capacity)
+#run_wwt_comparison()

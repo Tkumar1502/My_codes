@@ -221,7 +221,7 @@ class Disinfection_Unit(bst.Unit):
 
     @property
     def total_salary(self):
-        return 70000.0 * self.N_shifts * self.N_workers * 1.6
+        return 50000.0 * self.N_shifts * self.N_workers * 1.6
     
     def _cost(self):
         V = self.design_results['Volume']
@@ -796,7 +796,10 @@ def my_profit(processing_capacity, ndfeb_price, ndfeb_conc, feed_price, peraceti
         
     # 4. Update Capacity and Labor
     N_shifts = 2
-    tea.labor_cost = worker_salary * N_shifts * 6 * 1.6
+    N_workers = 0
+    for i in [U1, U2, U3, U4, U5]:
+        N_workers += i.N_workers 
+    tea.labor_cost = worker_salary * N_shifts * N_workers * 1.6
     
     work_hours = capacity / 400
     feed_per_hour = capacity / work_hours
@@ -807,9 +810,10 @@ def my_profit(processing_capacity, ndfeb_price, ndfeb_conc, feed_price, peraceti
     feed.imass['NdFeB'] = feed_per_hour * (0.18 * ndfeb_conc)
     feed.imass['HDPE'] = feed_per_hour * (0.18 * (1.0 - ndfeb_conc))
     feed.imass['Films'] = feed_per_hour * 0.10
-    feed.imass['FittingsFilters'] = feed_per_hour * 0.36
+    feed.imass['FittingsFilters'] = feed_per_hour * 0.35
     feed.imass['BrownSupport'] = feed_per_hour * 0.07
-    feed.imass['SiliconeTubings'] = feed_per_hour * 0.29
+    feed.imass['SiliconeTubings'] = feed_per_hour * 0.28
+    feed.imass['BiogenicResidue'] = feed_per_hour*0.02
     
     # Run the simulation once
     process.simulate()
@@ -946,26 +950,41 @@ def best_case():
     """
     Evaluates the Mechanical plant under the most favorable (optimistic) operating conditions
     derived from the upper/lower bounds in the sensitivity analysis tornado plot.
+    Dynamically includes MBBR chemicals and BOD wastewater fees based on plant configuration.
     """
+    is_mbbr_active = isinstance(WWT_System, MBBR_Tank)
+    
+    # Calculate baseline wastewater fee depending on MBBR state
+    if is_mbbr_active:
+        base_ww_fee = 0.0036
+    else:
+        base_ww_fee = 0.0036 + wastewater_bod_fee(WWT_System.outs[0])
+
     best_params = {
-        'ndfeb_conc': 0.9,          # Max magnet concentration in impeller (0.9)
-        'processing_capacity': 2965,               # Max processing capacity (2,965 tons/yr)
-        'feed_price': 0.10,        # Min feedstock purchase price ($0.10/kg)
-        'ndfeb_price': 150.0,           # Max magnet selling price ($150.00/kg)
-        'worker_salary': 40.0,          # Min worker salary ($40k/yr)
-        'freshwater_price': 0.0008,     # Min freshwater price ($0.0008/kg)
-        'peraceticacid_price': 4.40,              # Min peracetic acid price ($4.40/kg)
-        'wastewater_fee': 0.001,        # Min wastewater fee ($0.001/L)
-        'othercomponent_fee': 0.01,     # Min disposal fee ($0.01/kg)
-        'hdpe_fee': 0.01,                # Min HDPE disposal fee ($0.01/kg)
-        'nahso3_price': 0.325,
-        'naoh_price': 0.375
+        'ndfeb_conc': 0.9,                  # Max magnet concentration in impeller (0.9)
+        'processing_capacity': 2965,        # Max processing capacity (2,965 tons/yr)
+        'feed_price': 0.10,                # Min feedstock purchase price ($0.10/kg)
+        'ndfeb_price': 150.0,               # Max magnet selling price ($150.00/kg)
+        'worker_salary': 40000,             # Min worker salary ($40k/yr)
+        'freshwater_price': 0.0008,         # Min freshwater price ($0.0008/kg)
+        'peraceticacid_price': 4.40,        # Min peracetic acid price ($4.40/kg)
+        'wastewater_fee': 0.5 * base_ww_fee,# Min wastewater fee (50% of baseline)
+        'othercomponent_fee': 0.01,         # Min disposal fee ($0.01/kg)
+        'hdpe_fee': 0.01,                   # Min HDPE disposal fee ($0.01/kg)
+        'nahso3_price': 0.325,              # Min NaHSO3 price ($0.325/kg)
+        'naoh_price': 0.375,                # Min NaOH price ($0.375/kg)
     }
+
+    # Only include Urea and H3PO4 when MBBR is active
+    if is_mbbr_active:
+        best_params['urea_price'] = 0.30    # Min Urea price ($0.30/kg)
+        best_params['h3po4_price'] = 0.375  # Min H3PO4 price ($0.375/kg)
     
     net_earnings = my_profit(**best_params)
     irr_val = tea.solve_IRR() * 100
     
-    print(f"=== MECHANICAL PLANT BEST-CASE SCENARIO ===")
+    print(f"=== MECHANICAL PLANT BEST-CASE SCENARIO (MBBR={is_mbbr_active}) ===")
+    print(best_params)
     print(f"Net Earnings: ${net_earnings / 1e6:.2f} MM/yr")
     print(f"Internal Rate of Return (IRR): {irr_val:.2f}%\n")
     
@@ -976,26 +995,40 @@ def worst_case():
     """
     Evaluates the Mechanical plant under the most unfavorable (pessimistic) operating conditions
     derived from the upper/lower bounds in the sensitivity analysis tornado plot.
+    Dynamically includes MBBR chemicals and BOD wastewater fees based on plant configuration.
     """
+    is_mbbr_active = isinstance(WWT_System, MBBR_Tank)
+    
+    # Calculate baseline wastewater fee depending on MBBR state
+    if is_mbbr_active:
+        base_ww_fee = 0.0036
+    else:
+        base_ww_fee = 0.0036 + wastewater_bod_fee(WWT_System.outs[0])
+
     worst_params = {
-        'ndfeb_conc': 0.8,          # Min magnet concentration in impeller (0.8)
-        'processing_capacity': 990,                # Min processing capacity (990 tons/yr)
-        'feed_price': 0.50,        # Max feedstock purchase price ($0.50/kg)
-        'ndfeb_price': 50.0,            # Min magnet selling price ($50.00/kg)
-        'worker_salary': 70.0,          # Max worker salary ($70k/yr)
-        'freshwater_price': 0.002,      # Max freshwater price ($0.002/kg)
-        'peraceticacid_price': 13.20,             # Max peracetic acid price ($13.20/kg)
-        'wastewater_fee': 0.005,        # Max wastewater fee ($0.005/L)
-        'othercomponent_fee': 0.10,     # Max disposal fee ($0.10/kg)
-        'hdpe_fee': 0.10,                # Max HDPE disposal fee ($0.10/kg)
-        'nahso3_price': 0.975,
-        'naoh_price': 1.125
+        'ndfeb_conc': 0.8,                  # Min magnet concentration in impeller (0.8)
+        'processing_capacity': 990,         # Min processing capacity (990 tons/yr)
+        'feed_price': 0.50,                # Max feedstock purchase price ($0.50/kg)
+        'ndfeb_price': 50.0,                # Min magnet selling price ($50.00/kg)
+        'worker_salary': 70000,             # Max worker salary ($70k/yr)
+        'freshwater_price': 0.002,          # Max freshwater price ($0.002/kg)
+        'peraceticacid_price': 13.20,       # Max peracetic acid price ($13.20/kg)
+        'wastewater_fee': 1.5 * base_ww_fee,# Max wastewater fee (150% of baseline including BOD when MBBR=False)
+        'othercomponent_fee': 0.10,         # Max disposal fee ($0.10/kg)
+        'hdpe_fee': 0.10,                   # Max HDPE disposal fee ($0.10/kg)
+        'nahso3_price': 0.975,              # Max NaHSO3 price ($0.975/kg)
+        'naoh_price': 1.125,                # Max NaOH price ($1.125/kg)
     }
+
+    # Only include Urea and H3PO4 when MBBR is active
+    if is_mbbr_active:
+        worst_params['urea_price'] = 0.90    # Max Urea price ($0.90/kg)
+        worst_params['h3po4_price'] = 1.125  # Max H3PO4 price ($1.125/kg)
     
     net_earnings = my_profit(**worst_params)
     irr_val = tea.solve_IRR() * 100
     
-    print(f"=== MECHANICAL PLANT WORST-CASE SCENARIO ===")
+    print(f"=== MECHANICAL PLANT WORST-CASE SCENARIO (MBBR={is_mbbr_active}) ===")
     print(worst_params)
     print(f"Net Earnings: ${net_earnings / 1e6:.2f} MM/yr")
     print(f"Internal Rate of Return (IRR): {irr_val:.2f}%\n")
@@ -1223,7 +1256,7 @@ def tornado_plot():
         p_lows = [d[4] for d in data]
         p_highs = [d[5] for d in data]
 
-        plt.figure(figsize=(11, 7))
+        plt.figure(figsize=(11, 7),dpi = 300)
         
         # Handle inverted metrics (e.g., lower fee = higher profit)
         for i in range(len(names)):
@@ -1239,14 +1272,15 @@ def tornado_plot():
         x_min, x_max = plt.xlim()
         x_gap = 0.03 * (x_max - x_min)
 
-        for i, (lo, hi) in enumerate(zip(p_lows, p_highs)):
-            if lows[i] < base_val:
-                plt.text(lows[i] - x_gap, i, f"{lo}", ha="right", va="center", fontsize=11, fontweight="bold", color="grey")
-                plt.text(highs[i] + x_gap, i, f"{hi}", ha="left", va="center", fontsize=11, fontweight="bold", color="grey")
-            else:
-                plt.text(highs[i] - x_gap, i, f"{hi}", ha="right", va="center", fontsize=11, fontweight="bold", color="grey")
-                plt.text(lows[i] + x_gap, i, f"{lo}", ha="left", va="center", fontsize=11, fontweight="bold", color="grey")
-
+        for i in range(len(names)):
+            bar_left = min(lows[i], highs[i])
+            bar_right = max(lows[i], highs[i])
+            
+            lo_param = p_lows[i]
+            hi_param = p_highs[i]
+            
+            plt.text(bar_left - x_gap, i, f"{lo_param}", ha="right", va="center", fontsize=11, fontweight="bold", color="grey")
+            plt.text(bar_right + x_gap, i, f"{hi_param}", ha="left", va="center", fontsize=11, fontweight="bold", color="grey")
         all_points = lows + highs + [base_val]
         padding = (max(all_points) - min(all_points)) * 0.25
         plt.xlim(min(all_points) - padding, max(all_points) + padding)
