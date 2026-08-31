@@ -29,22 +29,28 @@ bst.main_flowsheet.clear()
 if hasattr(strap.MagnetRecovery, 'cache'):
     strap.MagnetRecovery.cache.clear()
 
+
+#%%CHECK MBBR
+MBBR = False
+print("MBBR ", MBBR)
+
 capacity = 1976
 bst.settings.CEPCI = 836.9
 process = strap.MagnetRecovery(
     processing_capacity = capacity,      #tons
     sell_leftover_plastic = True,
     simulate=False,
-    mbbr = False)
+    mbbr = MBBR)
 
 
 feed_composition = {'NdFeB': 0.1548,
         'HDPE': 0.0252,
         'Films': 0.10,
-        'FittingsFilters': 0.36,
+        'FittingsFilters': 0.35,
         'BrownSupport': 0.07,
-        'SiliconeTubings': 0.29,
-        'Solutes': 0.001
+        'SiliconeTubings': 0.28,
+        'Solutes': 0.001,
+        'BiogenicResidue': 0.02,
         }
 
 process.tea.operating_hours = 309*2*8       #days*shifts*hours
@@ -251,13 +257,30 @@ process.adsorption_column.ins[2].set_CF(POCP,0.00619 + .00207 )
 
 
 #%%CFs for peracetic acid
-process.system.feeds[2].ID = "peracetic_acid"
+process.system.feeds[2].ID = "peracetic_acid (15%)"
 process.system.feeds[2].set_CF(GWP, 0.0)
 
 
 #%%CFs for freshwater
 process.U10.ins[1].ID = 'fresh_water'
 process.U10.ins[1].set_CF(GWP,0.0)
+
+
+#%%CFs for NaHSO3
+process.system.feeds[3].ID = 'NaHSO3_(40%)'
+process.system.feeds[3].set_CF(GWP, 0.0)
+
+#%%CFS for NaOH
+process.system.feeds[4].ID = 'NaOH_(50%)'
+process.system.feeds[4].set_CF(GWP, 0.0)
+
+#%%CFs for H3PO4 and Urea
+if MBBR == True:
+    process.MBBR_System.ins[1].ID = 'Urea (32.5%)'
+    process.MBBR_System.ins[1].set_CF(GWP, 0.0)
+    
+    process.MBBR_System.ins[2].ID = 'H3PO4 (75%)'
+    process.MBBR_System.ins[2].set_CF(GWP, 0.0)
 
 
 #%%

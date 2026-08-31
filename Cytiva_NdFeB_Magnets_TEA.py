@@ -22,8 +22,8 @@ original_u7_design = strap.units.Precipitator._design
 # 1. GLOBAL CONFIGURATION & MASTER SWITCHES
 # =============================================================================
 #%% CHECK MBBR
-# BRAND NEW VARIABLE: Overcomes IDE caching issues
-ENABLE_MBBR_WWT = False     # True = On-site MBBR WWT; False = Municipal sewer discharge
+ENABLE_MBBR_WWT = True    # True = On-site MBBR WWT; False = Municipal sewer discharge
+
 print("MBBR Enabled:", ENABLE_MBBR_WWT)
 
 capacity = 1976           # MT/yr feedstock capacity
@@ -201,7 +201,7 @@ def build_process(mbbr_flag=ENABLE_MBBR_WWT, proc_capacity=capacity):
 
     othercomponents = process.S3.outs[0]
     othercomponents.price = -0.072
-    process.S3.outs[1].price = 0.0
+    
 
     freshwater = process.U10.ins[1]
     peracetic_acid = process.U10.ins[2]
@@ -214,6 +214,17 @@ def build_process(mbbr_flag=ENABLE_MBBR_WWT, proc_capacity=capacity):
     nahso3.price = 0.65
     naoh.price = 0.75
     process.set_solvent_price(0.85)
+    
+    # Inserted inside build_process() after standard chemical pricing definitions:
+    if mbbr_flag:
+        # Directly assign baseline nutrient prices via MBBR inlet streams
+        process.MBBR_System.ins[1].price = 0.92  # Urea ($/kg)
+        process.MBBR_System.ins[2].price = 2.80  # H3PO4 ($/kg)
+
+        #wastewater = process.MBBR_System.outs[0]
+        #wastewater.price = -0.0036
+        #if hasattr(process, 'Sewer_Discharge'):
+            #process.Sewer_Discharge.outs[0].price = 0.0
 
     def c_u3(self):
         self.baseline_purchase_costs.clear()
@@ -382,7 +393,7 @@ def run_wwt_comparison(target_mbbr=ENABLE_MBBR_WWT):
 
 def profit(u3_ndfeb_ratio, capacity, solvent_loss, plastic_conc, solvent_price, feedstock_price, 
            NdFeB_price, HDPE_price, freshwater_price, paa_price, wastewater_fee, othercomponent_fee,
-           naoh_price=0.75, nahso3_price=0.65, urea_price=0.50, h3po4_price=1.20, **kwargs):
+           naoh_price=0.75, nahso3_price=0.65, urea_price=0.92, h3po4_price=2.80, **kwargs):
     """Evaluates process net earnings given varying sensitivity parameters."""
     process.set_processing_capacity(capacity)
     process.set_solvent_loss(solvent_loss)
@@ -416,6 +427,7 @@ def profit(u3_ndfeb_ratio, capacity, solvent_loss, plastic_conc, solvent_price, 
     feedstock.imass['SiliconeTubings'] = feed_per_hour * 0.28
     feedstock.imass['Solutes'] = feed_per_hour * 0.001
     feedstock.imass['BiogenicResidue'] = feed_per_hour * 0.02
+   
 
     process.system.simulate()
     return process.tea.net_earnings
@@ -451,10 +463,10 @@ def tornado_plot():
     }
 
     if ENABLE_MBBR_WWT:
-        base_params.update({'urea_price': 0.50, 'h3po4_price': 1.20})
+        base_params.update({'urea_price': 0.92, 'h3po4_price': 2.80})
         ranges.update({
-            'urea_price': (0.25, 0.75),
-            'h3po4_price': (0.60, 1.80)
+            'urea_price': (0.46, 1.38),
+            'h3po4_price': (1.40, 4.20)
         })
         label_map.update({
             'urea_price': 'Urea Price ($/kg)',
@@ -520,7 +532,7 @@ def best_case_scenario():
         'naoh_price': 0.375, 'nahso3_price': 0.325
     }
     if ENABLE_MBBR_WWT:
-        best_params.update({'urea_price': 0.25, 'h3po4_price': 0.60})
+        best_params.update({'urea_price': 0.46, 'h3po4_price': 1.40})
 
     net_earnings = profit(**best_params)
     irr_val = my_irr(**best_params)
@@ -542,7 +554,7 @@ def worst_case_scenario():
         'naoh_price': 1.125, 'nahso3_price': 0.975
     }
     if ENABLE_MBBR_WWT:
-        worst_params.update({'urea_price': 0.75, 'h3po4_price': 1.80})
+        worst_params.update({'urea_price': 1.38, 'h3po4_price': 4.20})
 
     net_earnings = profit(**worst_params)
     irr_val = my_irr(**worst_params)
@@ -655,7 +667,10 @@ def plot_it(data, base_val, title, x_label, color):
     green_patch = mpatches.Patch(color='green', label='Gaining money')
     baseline_legend = mlines.Line2D([], [], color='blue', linestyle='--', linewidth=2.0, label=f'Baseline: {base_val:.2f}')
     
+
     leg = plt.legend(handles=[red_patch, green_patch, baseline_legend], loc='upper right', fontsize=9.5)
+    #leg = plt.legend(handles=[red_patch, green_patch, baseline_legend], loc='best')
+    leg = plt.legend(handles=[red_patch, green_patch, baseline_legend], prop={"weight": "bold", "size": 11}, loc = "best")
     leg.get_frame().set_edgecolor('black')
     leg.get_frame().set_linewidth(1.5)
     
@@ -681,7 +696,7 @@ def plot_profit_vs_scale(scale_list=None, profit_list=None, impeller_frac=None):
     plt.axhline(0, color='black', linewidth=1, linestyle='--')
     plt.xlabel(x_title, fontsize=11, fontweight='bold', labelpad=10)
     plt.ylabel('Net Earnings [MM$ / yr]', fontsize=11, fontweight='bold', labelpad=10)
-    plt.title('Cytiva STRAP Plant Profitability', fontsize=13, fontweight='bold', pad=15)
+    plt.title('Cytiva STRAP Plant Profitability vs. Scale', fontsize=13, fontweight='bold', pad=15)
     plt.xticks(rotation=45, ha='right', fontsize=9, fontweight='bold')
     plt.yticks(fontsize=10, fontweight='bold')
 

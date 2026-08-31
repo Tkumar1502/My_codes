@@ -272,27 +272,34 @@ class MBBR_Tank(bst.Unit):
         wastewater, urea_in, h3po4_in = self.ins
         clean_water, sludge = self.outs
         
-        # 1. BOD Load
-        aa_bod = wastewater.imass['AceticAcid'] * 0.78
-        bio_bod = wastewater.imass['BiogenicResidue'] * 0.65
-        self.bod_kg_hr = aa_bod + bio_bod
+        # 1. Total BOD Load Calculation (Synchronized with wastewater_bod_fee)
+        bod_factors = {
+            'CH3COONa': (64.0 / 82.0) * 0.85,          # ~0.663 kg BOD / kg
+            'BiogenicResidue': (160.0 / 113.0) * 0.65,  # ~0.920 kg BOD / kg
+        }
+        
+        self.bod_kg_hr = (
+            wastewater.imass['CH3COONa'] * bod_factors['CH3COONa'] +
+            wastewater.imass['BiogenicResidue'] * bod_factors['BiogenicResidue']
+        )
         
         # 2. Nutrient Dosing (BOD:N:P = 100:5:1)
-        # 32.5% Urea solution
-        pure_urea = (self.bod_kg_hr * 0.05) / 0.46
+        # Commercial 32.5% Urea Solution (N wt fraction in pure Urea = 0.4665)
+        pure_urea = (self.bod_kg_hr * 0.05) / 0.4665
         urea_water = (pure_urea / 0.325) - pure_urea
         
-        # 75% Phosphoric Acid solution
-        pure_h3po4 = (self.bod_kg_hr * 0.01) / 0.316
+        # Commercial 75% Phosphoric Acid Solution (P wt fraction in pure H3PO4 = 0.3161)
+        pure_h3po4 = (self.bod_kg_hr * 0.01) / 0.3161
         h3po4_water = (pure_h3po4 / 0.75) - pure_h3po4
         
+        # Update Nutrient Feed Streams
         urea_in.empty()
         urea_in.imass['Urea', 'Water'] = pure_urea, urea_water
         
         h3po4_in.empty()
         h3po4_in.imass['H3PO4', 'Water'] = pure_h3po4, h3po4_water
         
-        # 3. Treatment Outputs
+        # 3. Treatment Outputs & Mass Balance
         clean_water.empty()
         sludge.empty()
         
@@ -651,7 +658,7 @@ WM_Mixer = bst.Mixer('WM_Mixer', ins=(U1.outs[2], S2.outs[1]),
                      outs =  'Combined_Wastewater')
 
 #%%CHECK MBBR
-MBBR = True
+MBBR = False
 print("MBBR: ", MBBR)
 WWT_System = build_wastewater_treatment(WM_Mixer.outs[0], MBBR)
 
@@ -731,8 +738,8 @@ nahso3_utility.price = 0.65
 naoh_utility.price = 0.75
 
 if isinstance(WWT_System, MBBR_Tank):
-    WWT_System.ins[1].price = 0.60      #Urea feed
-    WWT_System.ins[2].price = 0.75      #Phosphoric acid feed
+    WWT_System.ins[1].price = 0.92      #Urea feed
+    WWT_System.ins[2].price = 2.80      #Phosphoric acid feed
     WWT_System.outs[0].price = -0.0036  #wastewater without bod
     WWT_System.outs[1].price = -0.072   #landfilling
 else:
@@ -766,7 +773,7 @@ tea = MechanicalRecyclingTEA(
 #%%defining functions for TEA
 def my_profit(processing_capacity, ndfeb_price, ndfeb_conc, feed_price, peraceticacid_price, freshwater_price,
               othercomponent_fee, wastewater_fee, hdpe_fee, worker_salary, nahso3_price, naoh_price,
-              urea_price=0.60, h3po4_price=0.75):
+              urea_price=0.92, h3po4_price=2.80):
     
     # 1. Clear intermediate stream prices to prevent BioSTEAM confusion
     WM_Mixer.outs[0].price = 0.0
@@ -798,7 +805,8 @@ def my_profit(processing_capacity, ndfeb_price, ndfeb_conc, feed_price, peraceti
     N_shifts = 2
     N_workers = 0
     for i in [U1, U2, U3, U4, U5]:
-        N_workers += i.N_workers 
+        N_workers += i.N_workers
+
     tea.labor_cost = worker_salary * N_shifts * N_workers * 1.6
     
     work_hours = capacity / 400
@@ -951,6 +959,8 @@ def best_case():
     Evaluates the Mechanical plant under the most favorable (optimistic) operating conditions
     derived from the upper/lower bounds in the sensitivity analysis tornado plot.
     Dynamically includes MBBR chemicals and BOD wastewater fees based on plant configuration.
+    Evaluates the Mechanical plant under the most favorable operating conditions.
+    Includes nutrient price discounts when MBBR treatment is active.
     """
     is_mbbr_active = isinstance(WWT_System, MBBR_Tank)
     
@@ -973,6 +983,18 @@ def best_case():
         'hdpe_fee': 0.01,                   # Min HDPE disposal fee ($0.01/kg)
         'nahso3_price': 0.325,              # Min NaHSO3 price ($0.325/kg)
         'naoh_price': 0.375,                # Min NaOH price ($0.375/kg)
+        'ndfeb_conc': 0.9,          # Max magnet concentration in impeller
+        'processing_capacity': 2965,# Max processing capacity (2,965 tons/yr)
+        'feed_price': 0.10,        # Min feedstock purchase price ($0.10/kg)
+        'ndfeb_price': 150.0,       # Max magnet selling price ($150.00/kg)
+        'worker_salary': 40.0,      # Min worker salary ($40k/yr)
+        'freshwater_price': 0.0008, # Min freshwater price ($0.0008/kg)
+        'peraceticacid_price': 4.40,# Min peracetic acid price ($4.40/kg)
+        'wastewater_fee': 0.001,    # Min wastewater fee ($0.001/L)
+        'othercomponent_fee': 0.01, # Min disposal fee ($0.01/kg)
+        'hdpe_fee': 0.01,           # Min HDPE disposal fee ($0.01/kg)
+        'nahso3_price': 0.325,      # Min NaHSO3 price ($0.325/kg)
+        'naoh_price': 0.375         # Min NaOH price ($0.375/kg)
     }
 
     # Only include Urea and H3PO4 when MBBR is active
@@ -980,13 +1002,23 @@ def best_case():
         best_params['urea_price'] = 0.30    # Min Urea price ($0.30/kg)
         best_params['h3po4_price'] = 0.375  # Min H3PO4 price ($0.375/kg)
     
+    # Inject nutrient discounts (-50% bound) only when MBBR is active
+    if isinstance(WWT_System, MBBR_Tank):
+        best_params['urea_price'] = 0.46   # Baseline $0.92 -> $0.46/kg
+        best_params['h3po4_price'] = 1.40  # Baseline $2.80 -> $1.40/kg
+    
     net_earnings = my_profit(**best_params)
     irr_val = tea.solve_IRR() * 100
     
     print(f"=== MECHANICAL PLANT BEST-CASE SCENARIO (MBBR={is_mbbr_active}) ===")
     print(best_params)
+    print(best_params)
+    print(f"=== MECHANICAL PLANT BEST-CASE SCENARIO ===")
     print(f"Net Earnings: ${net_earnings / 1e6:.2f} MM/yr")
-    print(f"Internal Rate of Return (IRR): {irr_val:.2f}%\n")
+    print(f"Internal Rate of Return (IRR): {irr_val:.2f}%")
+    #if isinstance(WWT_System, MBBR_Tank):
+        #print(f"Nutrient Prices -> Urea: ${best_params['urea_price']:.2f}/kg | H3PO4: ${best_params['h3po4_price']:.2f}/kg")
+    print()
     
     return net_earnings, irr_val
 
@@ -996,6 +1028,9 @@ def worst_case():
     Evaluates the Mechanical plant under the most unfavorable (pessimistic) operating conditions
     derived from the upper/lower bounds in the sensitivity analysis tornado plot.
     Dynamically includes MBBR chemicals and BOD wastewater fees based on plant configuration.
+    Evaluates the Mechanical plant under the most unfavorable operating conditions.
+    Includes nutrient price markups when MBBR treatment is active.
+
     """
     is_mbbr_active = isinstance(WWT_System, MBBR_Tank)
     
@@ -1018,6 +1053,19 @@ def worst_case():
         'hdpe_fee': 0.10,                   # Max HDPE disposal fee ($0.10/kg)
         'nahso3_price': 0.975,              # Max NaHSO3 price ($0.975/kg)
         'naoh_price': 1.125,                # Max NaOH price ($1.125/kg)
+
+        'ndfeb_conc': 0.8,          # Min magnet concentration in impeller
+        'processing_capacity': 990, # Min processing capacity (990 tons/yr)
+        'feed_price': 0.50,        # Max feedstock purchase price ($0.50/kg)
+        'ndfeb_price': 50.0,        # Min magnet selling price ($50.00/kg)
+        'worker_salary': 70.0,      # Max worker salary ($70k/yr)
+        'freshwater_price': 0.002,  # Max freshwater price ($0.002/kg)
+        'peraceticacid_price': 13.20,# Max peracetic acid price ($13.20/kg)
+        'wastewater_fee': 0.005,    # Max wastewater fee ($0.005/L)
+        'othercomponent_fee': 0.10, # Max disposal fee ($0.10/kg)
+        'hdpe_fee': 0.10,           # Max HDPE disposal fee ($0.10/kg)
+        'nahso3_price': 0.975,      # Max NaHSO3 price ($0.975/kg)
+        'naoh_price': 1.125         # Max NaOH price ($1.125/kg)
     }
 
     # Only include Urea and H3PO4 when MBBR is active
@@ -1025,13 +1073,22 @@ def worst_case():
         worst_params['urea_price'] = 0.90    # Max Urea price ($0.90/kg)
         worst_params['h3po4_price'] = 1.125  # Max H3PO4 price ($1.125/kg)
     
+    # Inject nutrient markups (+50% bound) only when MBBR is active
+    if isinstance(WWT_System, MBBR_Tank):
+        worst_params['urea_price'] = 1.38   # Baseline $0.92 -> $1.38/kg
+        worst_params['h3po4_price'] = 4.20  # Baseline $2.80 -> $4.20/kg
+    
     net_earnings = my_profit(**worst_params)
     irr_val = tea.solve_IRR() * 100
     
     print(f"=== MECHANICAL PLANT WORST-CASE SCENARIO (MBBR={is_mbbr_active}) ===")
     print(worst_params)
+    print(f"=== MECHANICAL PLANT WORST-CASE SCENARIO ===")
     print(f"Net Earnings: ${net_earnings / 1e6:.2f} MM/yr")
-    print(f"Internal Rate of Return (IRR): {irr_val:.2f}%\n")
+    print(f"Internal Rate of Return (IRR): {irr_val:.2f}%")
+    #if isinstance(WWT_System, MBBR_Tank):
+        #print(f"Nutrient Prices -> Urea: ${worst_params['urea_price']:.2f}/kg | H3PO4: ${worst_params['h3po4_price']:.2f}/kg")
+    print()
     
     return net_earnings, irr_val
 
@@ -1092,8 +1149,8 @@ def simulate_and_get_profit(use_mbbr):
     naoh_utility.price = 0.75
 
     if use_mbbr:
-        WWT_System.ins[1].price = 0.60
-        WWT_System.ins[2].price = 0.75
+        WWT_System.ins[1].price = 0.92
+        WWT_System.ins[2].price = 2.80
         WWT_System.outs[0].price = -0.0036
         WWT_System.outs[1].price = -0.072
     else:
@@ -1203,11 +1260,11 @@ def tornado_plot():
 
     # Conditionally inject Urea and H3PO4 if MBBR is true
     if is_mbbr_active:
-        base_params["urea_price"] = 0.60
-        base_params["h3po4_price"] = 0.75
+        base_params["urea_price"] = 0.92
+        base_params["h3po4_price"] = 2.80
         
-        ranges["urea_price"] = (0.30, 0.90)      # +/- 50%
-        ranges["h3po4_price"] = (0.375, 1.125)   # +/- 50%
+        ranges["urea_price"] = (0.46, 1.38)      # +/- 50%
+        ranges["h3po4_price"] = (1.40, 4.20)   # +/- 50%
         
         label_map["urea_price"] = "Urea Price ($/kg)"
         label_map["h3po4_price"] = "H3PO4 Price ($/kg)"
@@ -1257,6 +1314,7 @@ def tornado_plot():
         p_highs = [d[5] for d in data]
 
         plt.figure(figsize=(11, 7),dpi = 300)
+        plt.figure(figsize=(10, 5))
         
         # Handle inverted metrics (e.g., lower fee = higher profit)
         for i in range(len(names)):
@@ -1272,6 +1330,7 @@ def tornado_plot():
         x_min, x_max = plt.xlim()
         x_gap = 0.03 * (x_max - x_min)
 
+        
         for i in range(len(names)):
             bar_left = min(lows[i], highs[i])
             bar_right = max(lows[i], highs[i])
@@ -1280,7 +1339,10 @@ def tornado_plot():
             hi_param = p_highs[i]
             
             plt.text(bar_left - x_gap, i, f"{lo_param}", ha="right", va="center", fontsize=11, fontweight="bold", color="grey")
+
             plt.text(bar_right + x_gap, i, f"{hi_param}", ha="left", va="center", fontsize=11, fontweight="bold", color="grey")
+            plt.text(bar_right + x_gap, i, f"{hi_param}", ha="left", va="center", fontsize=11, fontweight="bold", color="grey")        
+
         all_points = lows + highs + [base_val]
         padding = (max(all_points) - min(all_points)) * 0.25
         plt.xlim(min(all_points) - padding, max(all_points) + padding)
@@ -1294,8 +1356,8 @@ def tornado_plot():
         for spine in ax.spines.values():
             spine.set_linewidth(2)
 
-        red_patch = mpatches.Patch(color="red", label="Worse than Baseline")
-        green_patch = mpatches.Patch(color="green", label="Better than Baseline")
+        red_patch = mpatches.Patch(color="red", label="Losing money")
+        green_patch = mpatches.Patch(color="green", label="Gaining money")
         baseline_legend = mlines.Line2D([], [], color="blue", linestyle="--", label=f"Baseline: {base_val:.2f}")
 
         leg = plt.legend(handles=[red_patch, green_patch, baseline_legend], prop={"weight": "bold", "size": 11}, loc="best")
@@ -1373,7 +1435,7 @@ def plot_profit_vs_scale():
             color=text_color,
         )
 
-    title = "Mechanical Recovery Profitability"
+    title = "Mechanical Recovery Plant Profitability vs. Scale"
     x_label = "Bioreactor Bags Feedstock [Metric Tonnes / yr]"
 
     ax.set_title(title, fontsize=14, fontweight="bold", pad=15)
@@ -1477,7 +1539,7 @@ def plot_profit_line_mechanical():
     plt.xticks(x_ticks, [f"{x:,}" for x in x_ticks], fontsize=10, fontweight='bold')
     plt.yticks(fontsize=10, fontweight='bold')
 
-    plt.xlabel('Feedstock Capacity [Metric Tonnes / yr]', fontsize=11, fontweight='bold', labelpad=10)
+    plt.xlabel('Bioreactor Bags Feedstock [Metric Tonnes / yr]', fontsize=11, fontweight='bold', labelpad=10)
     plt.ylabel('Net Earnings [MM$ / yr]', fontsize=11, fontweight='bold', labelpad=10)
     plt.title('Mechanical Recovery Plant Profitability vs. Scale', fontsize=13, fontweight='bold', pad=15)
 
@@ -1525,5 +1587,12 @@ process.feeds[3].set_CF(GWP, 0.0)
 #CF for NaOH
 process.feeds[4].ID = "NaOH (50%)"
 process.feeds[4].set_CF(GWP, 0.0)
+
+if MBBR == True:
+    WWT_System.ins[1].ID = "Urea (32.5%)"
+    WWT_System.ins[1].set_CF(GWP, 0.0)
+    
+    WWT_System.ins[2].ID = "H3PO4 (75%)"
+    WWT_System.ins[2].set_CF(GWP, 0.0)
 
 inventory_table = bst.report.lca_inventory_table(systems =[process],keys='GWP', items=process.products)
